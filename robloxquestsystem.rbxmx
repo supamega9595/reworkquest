@@ -13399,27 +13399,32 @@ return RarityConfig]]></ProtectedString>
 			"Work together - progress is shared",
 		},
 		Type = "SharedCollectCount",
+		SpawnFolderName = "Pages",
+		RuntimeFolderName = "Pages",
 		Settings = {
 			Count = 8,
 			PickupTag = "QuestPickup_Page",
 		},
 	},
 	{
-		Id = "butterfly_crate",
-		Name = "Butterfly Crate",
-		Rarity = "Legendary",
-		Description = "Retrieve the marked crate and deliver it to the warded drop zone.",
+		Id = "capture_quest",
+		Name = "Capture Quest",
+		Rarity = "Common",
+		Threat = 30,
+		Description = "Secure the objective zone before dawn.",
 		Objectives = {
-			"Locate the butterfly crate",
-			"Deliver it to the drop marker",
+			"Locate the capture point",
+			"Hold and complete the capture objective",
 		},
 		Type = "DeliverItem",
+		SpawnFolderName = "CaptureQuest",
+		RuntimeFolderName = "CaptureQuest",
 		Settings = {
 			CrateTag = "QuestPickup_Crate",
 			DropTag = "QuestDrop_Crate",
 		},
-		},
-	}]]></ProtectedString>
+	},
+}]]></ProtectedString>
 					<string name="ScriptGuid">{2d5db30d-9156-49b3-813c-4c0d087788d3}</string>
 					<BinaryString name="AttributesSerialize"></BinaryString>
 					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
@@ -13433,7 +13438,7 @@ return RarityConfig]]></ProtectedString>
 				<Properties>
 					<Content name="LinkedSource"><null></null></Content>
 					<ProtectedString name="Source"><![CDATA[return {
-	ForceContract = true,
+	ForceContract = false,
 	ForcedContractId = "daily_pages",
 	Pages = {
 		FolderName = "QuestSpawns",
@@ -15447,6 +15452,9 @@ local ShowNightSummary = Remotes:WaitForChild("ShowNightSummary")
 local ActiveContractId = State:WaitForChild("ActiveContractId")
 local DayIndex = State:WaitForChild("DayIndex")
 
+local QUEST_RUNTIME_NAME = "QuestRuntime"
+local QUEST_SPAWNS_FOLDER_NAME = "QuestSpawns"
+
 local function isDaytime(minutes)
 	return minutes >= TimeConfig.DayStartMinutes and minutes < TimeConfig.DayEndMinutes
 end
@@ -15473,17 +15481,42 @@ local function chooseDailyContract()
 		warn("QuestContractsConfig has no contracts configured.")
 		return nil
 	end
+	if #QuestContractsConfig == 2 then
+		return QuestContractsConfig[math.random(1, 2)]
+	end
 	local index = math.random(1, #QuestContractsConfig)
 	return QuestContractsConfig[index]
 end
 
+local function rollRarity()
+	local order = RarityConfig.RarityOrder or {}
+	if #order == 0 then
+		return "Common"
+	end
+	return order[math.random(1, #order)]
+end
+
+local function resolveContractRarity(contract)
+	if not contract then
+		return nil
+	end
+	local resolved = table.clone(contract)
+	resolved.Rarity = rollRarity()
+	return resolved
+end
+
 local questState = {
 	activeContract = nil,
+	runtimeQuestRoot = nil,
 	progress = 0,
 	target = 0,
 	completed = false,
+	failed = false,
 	connections = {},
 	startTime = 0,
+	nightInProgress = false,
+	winsEligibleAtStart = {},
+	winsDisqualified = {},
 	playerDistances = {},
 	playerLastPositions = {},
 	playerDied = {},
@@ -15525,12 +15558,66 @@ local function getPickupBasePart(instance)
 	return nil
 end
 
-local function getQuestPagesFolder()
-	local questSpawns = workspace:FindFirstChild(QuestSettings.Pages.FolderName)
-	if not questSpawns then
+local function ensureQuestSpawnsInReplicatedStorage()
+	local rsFolder = ReplicatedStorage:FindFirstChild(QUEST_SPAWNS_FOLDER_NAME)
+	if rsFolder then
+		return rsFolder
+	end
+
+	local workspaceFolder = workspace:FindFirstChild(QUEST_SPAWNS_FOLDER_NAME)
+	if workspaceFolder then
+		workspaceFolder.Parent = ReplicatedStorage
+		print("QuestService: Moved Workspace.QuestSpawns into ReplicatedStorage")
+		return workspaceFolder
+	end
+
+	local created = Instance.new("Folder")
+	created.Name = QUEST_SPAWNS_FOLDER_NAME
+	created.Parent = ReplicatedStorage
+	warn("QuestService: Created empty ReplicatedStorage.QuestSpawns")
+	return created
+end
+
+local function getQuestSpawnsRoot()
+	local root = ensureQuestSpawnsInReplicatedStorage()
+	if not root then
+		warn("QuestService: ReplicatedStorage.QuestSpawns missing")
 		return nil
 	end
-	return questSpawns:FindFirstChild(QuestSettings.Pages.PagesFolderName)
+	return root
+end
+
+local function getQuestRuntimeContainer()
+	local runtime = workspace:FindFirstChild(QUEST_RUNTIME_NAME)
+	if not runtime then
+		runtime = Instance.new("Folder")
+		runtime.Name = QUEST_RUNTIME_NAME
+		runtime.Parent = workspace
+	end
+	return runtime
+end
+
+local function clearQuestRuntime()
+	local runtime = workspace:FindFirstChild(QUEST_RUNTIME_NAME)
+	if runtime then
+		runtime:Destroy()
+	end
+end
+
+local function getQuestPagesFolder()
+	local runtime = workspace:FindFirstChild(QUEST_RUNTIME_NAME)
+	if not runtime then
+		return nil
+	end
+	local pagesRoot = runtime:FindFirstChild(QuestSettings.Pages.PagesFolderName)
+	if pagesRoot then
+		return pagesRoot
+	end
+	local pagesContainer = runtime:FindFirstChild("Pages")
+	if pagesContainer and pagesContainer:IsA("Folder") then
+		return pagesContainer
+	end
+	return nil
 end
 
 local function recordPartDefaults(part)
@@ -15735,6 +15822,131 @@ local function hideCollectedPage(instance)
 		setPageActive(page, false)
 		removeQuestPickupTags(page)
 	end
+end
+
+local function isPlayerAlive(player)
+	local character = player.Character
+	if not character then
+		return false
+	end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	return humanoid ~= nil and humanoid.Health > 0
+end
+
+local function snapshotNightWinEligibility()
+	questState.winsEligibleAtStart = {}
+	questState.winsDisqualified = {}
+	for _, player in ipairs(Players:GetPlayers()) do
+		questState.winsEligibleAtStart[player.UserId] = true
+		questState.winsDisqualified[player.UserId] = false
+	end
+end
+
+local function isEligibleForNightWin(player)
+	local userId = player.UserId
+	if not questState.winsEligibleAtStart[userId] then
+		return false
+	end
+	if questState.winsDisqualified[userId] then
+		return false
+	end
+	if questState.playerDied[player] then
+		return false
+	end
+	return isPlayerAlive(player)
+end
+
+local function parsePartIndex(name)
+	local value = tonumber(string.match(name or "", "^Part(%d+)$"))
+	if value then
+		return value
+	end
+	return math.huge
+end
+
+local function getSortedWaypointParts(waypointsFolder)
+	local parts = {}
+	if not waypointsFolder then
+		return parts
+	end
+	for _, child in ipairs(waypointsFolder:GetChildren()) do
+		if child:IsA("BasePart") then
+			table.insert(parts, child)
+		end
+	end
+	table.sort(parts, function(a, b)
+		local aIndex = parsePartIndex(a.Name)
+		local bIndex = parsePartIndex(b.Name)
+		if aIndex == bIndex then
+			return a.Name < b.Name
+		end
+		return aIndex < bIndex
+	end)
+	return parts
+end
+
+local function validateCaptureQuestClone(captureRuntime)
+	if not captureRuntime then
+		warn("QuestService: CaptureQuest clone missing from QuestRuntime")
+		return false
+	end
+	local waypoints = captureRuntime:FindFirstChild("PartWaypoints")
+	if not waypoints then
+		warn("QuestService: Missing PartWaypoints under " .. captureRuntime:GetFullName())
+		return false
+	end
+	local waypointParts = getSortedWaypointParts(waypoints)
+	if #waypointParts == 0 then
+		warn("QuestService: PartWaypoints has zero BaseParts under " .. waypoints:GetFullName())
+		return false
+	end
+	local capturePoint = captureRuntime:FindFirstChild("CapturePoint")
+	local capCircle = capturePoint and capturePoint:FindFirstChild("CapCircle")
+	if not capCircle then
+		warn("QuestService: Missing CapturePoint.CapCircle under " .. captureRuntime:GetFullName())
+		return false
+	end
+	local preview = {}
+	for i = 1, math.min(5, #waypointParts) do
+		table.insert(preview, waypointParts[i].Name)
+	end
+	print("QuestService: CaptureQuest cloned at", captureRuntime:GetFullName())
+	print("QuestService: PartWaypoints count", #waypointParts)
+	print("QuestService: First waypoints", table.concat(preview, ", "))
+	return true
+end
+
+local function cloneQuestRuntime(contract)
+	clearQuestRuntime()
+	local runtime = getQuestRuntimeContainer()
+	local questSpawnsRoot = getQuestSpawnsRoot()
+	if not questSpawnsRoot then
+		return nil
+	end
+
+	local sourceFolderName = contract.SpawnFolderName or contract.RuntimeFolderName
+	if not sourceFolderName then
+		warn("QuestService: contract missing SpawnFolderName for", contract.Id)
+		return nil
+	end
+
+	local sourceQuestFolder = questSpawnsRoot:FindFirstChild(sourceFolderName)
+	if not sourceQuestFolder then
+		warn("QuestService: missing source quest folder", sourceFolderName, "under", questSpawnsRoot:GetFullName())
+		return nil
+	end
+
+	local clone = sourceQuestFolder:Clone()
+	clone.Name = contract.RuntimeFolderName or sourceQuestFolder.Name
+	clone.Parent = runtime
+
+	if contract.Id == "capture_quest" and not validateCaptureQuestClone(clone) then
+		clearQuestRuntime()
+		return nil
+	end
+
+	questState.runtimeQuestRoot = clone
+	return clone
 end
 
 local function registerDeathTracking(player)
@@ -15964,8 +16176,22 @@ local function startNightlyQuest(contract)
 	questState.startTime = os.time()
 	questState.playerDistances = {}
 	questState.playerLastPositions = {}
+	questState.completed = false
+	questState.failed = false
+	questState.nightInProgress = true
+	snapshotNightWinEligibility()
+
 	for _, player in ipairs(Players:GetPlayers()) do
 		questState.playerDied[player] = false
+	end
+
+	local runtimeRoot = cloneQuestRuntime(contract)
+	if not runtimeRoot then
+		warn("QuestService: Failed to clone runtime quest for", contract.Id)
+		questState.failed = true
+		questState.nightInProgress = false
+		questState.activeContract = nil
+		return
 	end
 
 	local handler = questHandlers[contract.Type]
@@ -15975,12 +16201,12 @@ local function startNightlyQuest(contract)
 		warn("QuestService: No handler for quest type:", contract.Type)
 	end
 
-	if contract.Id == QuestSettings.ForcedContractId or (contract.Settings and contract.Settings.PickupTag == QuestSettings.Pages.PickupTag) then
+	if contract.Id == "daily_pages" then
 		activatePageQuest()
 	end
 end
 
-local function stopNightlyQuest()
+local function stopNightlyQuest(reason)
 	local contract = questState.activeContract
 	if contract then
 		local handler = questHandlers[contract.Type]
@@ -15988,11 +16214,43 @@ local function stopNightlyQuest()
 			handler.stop()
 		end
 	end
+
+	if contract and not questState.completed and reason == "night_end" then
+		questState.failed = true
+		if contract.Id == "capture_quest" and questState.runtimeQuestRoot then
+			local capBase = questState.runtimeQuestRoot:FindFirstChild("CapturePoint")
+			and questState.runtimeQuestRoot.CapturePoint:FindFirstChild("CapCircle")
+			and questState.runtimeQuestRoot.CapturePoint.CapCircle:FindFirstChild("Base")
+			if capBase and capBase:IsA("BasePart") then
+				local failSound = Instance.new("Sound")
+				failSound.Name = "CaptureQuestFail"
+				failSound.SoundId = "rbxassetid://9118823102"
+				failSound.Volume = 0.5
+				failSound.Parent = capBase
+				failSound:Play()
+				failSound.Ended:Connect(function()
+					failSound:Destroy()
+				end)
+			end
+		end
+	end
+
 	deactivatePageQuest()
+	clearQuestRuntime()
+	questState.runtimeQuestRoot = nil
+	questState.nightInProgress = false
+end
+
+local function resetNightState()
+	questState.runtimeQuestRoot = nil
 	questState.activeContract = nil
+	questState.nightInProgress = false
 	questState.completed = false
+	questState.failed = false
 	questState.progress = 0
 	questState.target = 0
+	questState.winsEligibleAtStart = {}
+	questState.winsDisqualified = {}
 end
 
 local function calculateDistanceCash(distance)
@@ -16065,17 +16323,17 @@ local function payoutNightRewards()
 
 	for _, player in ipairs(Players:GetPlayers()) do
 		local distance = questState.playerDistances[player] or 0
-		local survived = not questState.playerDied[player]
+		local survived = not questState.playerDied[player] and isPlayerAlive(player)
 		local survivalCash = RewardsConfig.SurvivalCashBase
 		local completionCash = questState.completed and RewardsConfig.QuestCompleteCash or 0
 		local distanceCash = calculateDistanceCash(distance)
 		local totalCash = (survivalCash + completionCash + distanceCash) * rarityMultiplier
 		local xpAward = calculateXP(distance, survived, questState.completed)
-		local winsAward = survived and 1 or 0
+		local winsAward = isEligibleForNightWin(player) and 1 or 0
 
 		awardCash(player, totalCash)
 		if winsAward > 0 then
-			awardWins(player, winsAward)
+			awardWins(player, 1)
 		end
 		if xpAward > 0 then
 			awardXP(player, xpAward)
@@ -16091,6 +16349,7 @@ local function payoutNightRewards()
 		})
 	end
 end
+
 
 local function updateDistanceTracking()
 	local cfg = RewardsConfig.Distance
@@ -16112,14 +16371,24 @@ local function updateDistanceTracking()
 	end
 end
 
-local function getResolvedContractData(player)
+local function getActiveContract()
 	local contract = getContractById(ActiveContractId.Value)
+	if not contract then
+		return nil
+	end
+	local resolved = table.clone(contract)
+	resolved.Rarity = State:GetAttribute("ActiveContractRarity") or contract.Rarity or "Common"
+	return resolved
+end
+
+local function getResolvedContractData(player)
+	local contract = getActiveContract()
 	if not contract then
 		return nil
 	end
 
 	local rarityData = RarityConfig.Rarities[contract.Rarity]
-	local threat = contract.Threat or (rarityData and rarityData.DefaultThreat) or 0
+	local threat = (rarityData and rarityData.DefaultThreat) or contract.Threat or 0
 	local accepted = player:GetAttribute("AcceptedContractId") == contract.Id and player:GetAttribute("AcceptedContractDay") == DayIndex.Value
 
 	return {
@@ -16136,7 +16405,7 @@ local function getResolvedContractData(player)
 			Completion = RewardsConfig.QuestCompleteCash,
 			Distance = RewardsConfig.DistanceCashPerStud,
 		},
-	FlavorLine = DialogueConfig.BoardFlavor,
+		FlavorLine = DialogueConfig.BoardFlavor,
 	}
 end
 
@@ -16168,9 +16437,12 @@ end)
 
 local function rollNewContract()
 	local contract = chooseDailyContract()
-	if contract then
-		ActiveContractId.Value = contract.Id
+	if not contract then
+		return
 	end
+	local resolved = resolveContractRarity(contract)
+	ActiveContractId.Value = resolved.Id
+	State:SetAttribute("ActiveContractRarity", resolved.Rarity)
 end
 
 local lastIsDay = isDaytime(Lighting:GetMinutesAfterMidnight())
@@ -16184,6 +16456,14 @@ else
 	DayIndex.Value = DayIndex.Value == 0 and 0 or DayIndex.Value
 end
 
+if ActiveContractId.Value ~= "" and State:GetAttribute("ActiveContractRarity") == nil then
+	local existing = getContractById(ActiveContractId.Value)
+	if existing then
+		State:SetAttribute("ActiveContractRarity", existing.Rarity or "Common")
+	end
+end
+
+ensureQuestSpawnsInReplicatedStorage()
 ensureNpcPrompt(lastIsDay)
 resetAllPages()
 
@@ -16192,7 +16472,7 @@ for _, player in ipairs(Players:GetPlayers()) do
 end
 
 if not lastIsDay then
-	local contract = getContractById(ActiveContractId.Value)
+	local contract = getActiveContract()
 	if contract then
 		startNightlyQuest(contract)
 	end
@@ -16205,13 +16485,14 @@ task.spawn(function()
 
 		if isDay ~= lastIsDay then
 			if isDay then
+				stopNightlyQuest("night_end")
+				payoutNightRewards()
+				resetNightState()
 				DayIndex.Value += 1
 				rollNewContract()
 				updatePromptStyle(true)
-				payoutNightRewards()
-				stopNightlyQuest()
 			else
-				local contract = getContractById(ActiveContractId.Value)
+				local contract = getActiveContract()
 				if contract then
 					startNightlyQuest(contract)
 				end
@@ -16232,10 +16513,17 @@ Players.PlayerAdded:Connect(function(player)
 	questState.playerDistances[player] = 0
 	questState.playerLastPositions[player] = nil
 	questState.playerDied[player] = false
+	if questState.nightInProgress then
+		questState.winsEligibleAtStart[player.UserId] = nil
+		questState.winsDisqualified[player.UserId] = true
+	end
 	registerDeathTracking(player)
 end)
 
 Players.PlayerRemoving:Connect(function(player)
+	if questState.nightInProgress then
+		questState.winsDisqualified[player.UserId] = true
+	end
 	questState.playerDistances[player] = nil
 	questState.playerLastPositions[player] = nil
 	questState.playerDied[player] = nil
