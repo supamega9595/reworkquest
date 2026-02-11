@@ -15552,7 +15552,7 @@ local function getRarityPackage(rarity)
 end
 
 local function rollRarity()
-	local order = RarityConfig.RarityOrder or {"Common", "Uncommon", "Rare", "Epic", "Legendary"}
+	local order = RarityConfig.RarityOrder or { "Common", "Uncommon", "Rare", "Epic", "Legendary" }
 	local weights = RarityConfig.RarityRollWeights
 	if not weights then
 		return order[math.random(1, #order)]
@@ -15619,6 +15619,8 @@ local questState = {
 	playerDeathConnections = {},
 	activePages = {},
 	captureRuntime = nil,
+	questRuntimeFolder = nil,
+	questAssetsFolder = nil,
 }
 
 local function clearQuestConnections()
@@ -15655,12 +15657,66 @@ local function getPickupBasePart(instance)
 	return nil
 end
 
-local function getQuestPagesFolder()
-	local questSpawns = workspace:FindFirstChild(QuestSettings.Pages.FolderName)
+local function ensureQuestAssetsRoot()
+	if questState.questAssetsFolder and questState.questAssetsFolder.Parent == QuestSystem then
+		return questState.questAssetsFolder
+	end
+	local assets = QuestSystem:FindFirstChild("QuestAssets")
+	if not assets then
+		assets = Instance.new("Folder")
+		assets.Name = "QuestAssets"
+		assets.Parent = QuestSystem
+	end
+
+	local pagesName = QuestSettings.Pages.FolderName
+	local captureName = QuestSettings.Capture.RootFolderName
+	local workspacePages = workspace:FindFirstChild(pagesName)
+	local workspaceCapture = workspace:FindFirstChild(captureName)
+
+	if workspacePages and not assets:FindFirstChild(pagesName) then
+		workspacePages.Parent = assets
+	end
+	if workspaceCapture and not assets:FindFirstChild(captureName) then
+		workspaceCapture.Parent = assets
+	end
+
+	questState.questAssetsFolder = assets
+	return assets
+end
+
+local function getQuestAssetPagesFolder()
+	local assets = ensureQuestAssetsRoot()
+	local questSpawns = assets:FindFirstChild(QuestSettings.Pages.FolderName)
 	if not questSpawns then
 		return nil
 	end
 	return questSpawns:FindFirstChild(QuestSettings.Pages.PagesFolderName)
+end
+
+local function getQuestAssetCaptureRoot()
+	local assets = ensureQuestAssetsRoot()
+	return assets:FindFirstChild(QuestSettings.Capture.RootFolderName)
+end
+
+local function ensureQuestRuntimeFolder()
+	if questState.questRuntimeFolder and questState.questRuntimeFolder.Parent == workspace then
+		return questState.questRuntimeFolder
+	end
+	local folder = workspace:FindFirstChild("QuestRuntime")
+	if not folder then
+		folder = Instance.new("Folder")
+		folder.Name = "QuestRuntime"
+		folder.Parent = workspace
+	end
+	questState.questRuntimeFolder = folder
+	return folder
+end
+
+local function clearQuestRuntimeFolder()
+	if questState.questRuntimeFolder and questState.questRuntimeFolder.Parent == workspace then
+		questState.questRuntimeFolder:Destroy()
+	end
+	questState.questRuntimeFolder = nil
 end
 
 local function recordPartDefaults(part)
@@ -15756,7 +15812,7 @@ local function setPageActive(page, isActive)
 end
 
 local function findPageRoot(instance)
-	local folder = getQuestPagesFolder()
+	local folder = questState.questRuntimeFolder and questState.questRuntimeFolder:FindFirstChild(QuestSettings.Pages.PagesFolderName)
 	if not folder then
 		return nil
 	end
@@ -15791,39 +15847,42 @@ local function applyQuestPickupTag(page)
 end
 
 local function resetAllPages()
-	local folder = getQuestPagesFolder()
-	if not folder then
-		return
-	end
-	for _, page in ipairs(folder:GetChildren()) do
-		if page:IsA("BasePart") or page:IsA("Model") then
+	for _, page in ipairs(questState.activePages) do
+		if page and page.Parent then
 			removeQuestPickupTags(page)
-			setPageActive(page, false)
 		end
 	end
 	questState.activePages = {}
+
+	local runtimePages = questState.questRuntimeFolder and questState.questRuntimeFolder:FindFirstChild(QuestSettings.Pages.PagesFolderName)
+	if runtimePages then
+		runtimePages:Destroy()
+	end
 end
 
-local function selectRandomPages(count)
-	local folder = getQuestPagesFolder()
-	if not folder then
+local function selectRandomPageTemplates(count)
+	local templateFolder = getQuestAssetPagesFolder()
+	if not templateFolder then
 		return {}
 	end
+
 	local pages = {}
-	for _, page in ipairs(folder:GetChildren()) do
+	for _, page in ipairs(templateFolder:GetChildren()) do
 		if page:IsA("BasePart") or page:IsA("Model") then
 			table.insert(pages, page)
 		end
 	end
+
 	for i = #pages, 2, -1 do
 		local j = math.random(1, i)
 		pages[i], pages[j] = pages[j], pages[i]
 	end
-	local selection = {}
+
+	local selected = {}
 	for i = 1, math.min(count, #pages) do
-		table.insert(selection, pages[i])
+		table.insert(selected, pages[i])
 	end
-	return selection
+	return selected
 end
 
 local function activatePageQuest(targetCount)
@@ -15831,12 +15890,19 @@ local function activatePageQuest(targetCount)
 	if isDaytime(Lighting:GetMinutesAfterMidnight()) then
 		return
 	end
-	local selection = selectRandomPages(targetCount)
-	for _, page in ipairs(selection) do
+
+	local runtimeRoot = ensureQuestRuntimeFolder()
+	local runtimePages = Instance.new("Folder")
+	runtimePages.Name = QuestSettings.Pages.PagesFolderName
+	runtimePages.Parent = runtimeRoot
+
+	for _, template in ipairs(selectRandomPageTemplates(targetCount)) do
+		local page = template:Clone()
+		page.Parent = runtimePages
 		setPageActive(page, true)
 		applyQuestPickupTag(page)
+		table.insert(questState.activePages, page)
 	end
-	questState.activePages = selection
 end
 
 local function deactivatePageQuest()
@@ -15845,7 +15911,7 @@ end
 
 local function hideCollectedPage(instance)
 	local page = findPageRoot(instance) or instance
-	if page then
+	if page and page.Parent then
 		local part = page:IsA("BasePart") and page or page:FindFirstChildWhichIsA("BasePart")
 		if part then
 			local sound = Instance.new("Sound")
@@ -15983,6 +16049,10 @@ local function cleanupCaptureRuntime(result)
 	if runtime.burstSound and runtime.burstSound.IsPlaying then
 		runtime.burstSound:Stop()
 	end
+	if runtime.loopConnection then
+		runtime.loopConnection:Disconnect()
+		runtime.loopConnection = nil
+	end
 
 	if runtime.model and runtime.model.Parent then
 		local pos = runtime.base and runtime.base.Position or runtime.model:GetPivot().Position
@@ -15994,19 +16064,14 @@ local function cleanupCaptureRuntime(result)
 		runtime.model:Destroy()
 	end
 
-	if runtime.loopConnection then
-		runtime.loopConnection:Disconnect()
-		runtime.loopConnection = nil
-	end
-
 	questState.captureRuntime = nil
 end
 
 local function findFirstByNames(root, names)
 	for _, name in ipairs(names) do
-		local exact = root:FindFirstChild(name, true)
-		if exact then
-			return exact
+		local match = root:FindFirstChild(name, true)
+		if match then
+			return match
 		end
 	end
 	return nil
@@ -16044,6 +16109,8 @@ questHandlers.SharedCollectCount = {
 		questState.target = rarityCount or computed
 		questState.progress = 0
 		questState.completed = false
+
+		activatePageQuest(questState.target)
 		local pickupTag = contract.Settings.PickupTag
 		local collected = {}
 
@@ -16067,28 +16134,23 @@ questHandlers.SharedCollectCount = {
 				return
 			end
 			if instance:IsA("ProximityPrompt") then
-				local connection = instance.Triggered:Connect(function()
+				table.insert(questState.connections, instance.Triggered:Connect(function()
 					registerPickup(instance)
-				end)
-				table.insert(questState.connections, connection)
+				end))
 			else
-				local connection = part.Touched:Connect(function(hit)
+				table.insert(questState.connections, part.Touched:Connect(function(hit)
 					local player = getPlayerFromHit(hit)
 					if player then
 						registerPickup(instance)
 					end
-				end)
-				table.insert(questState.connections, connection)
+				end))
 			end
 		end
 
 		for _, instance in ipairs(CollectionService:GetTagged(pickupTag)) do
 			connectInstance(instance)
 		end
-
-		local added = CollectionService:GetInstanceAddedSignal(pickupTag):Connect(connectInstance)
-		table.insert(questState.connections, added)
-		activatePageQuest(questState.target)
+		table.insert(questState.connections, CollectionService:GetInstanceAddedSignal(pickupTag):Connect(connectInstance))
 	end,
 	stop = function()
 		clearQuestConnections()
@@ -16176,21 +16238,21 @@ questHandlers.CapturePoint = {
 	start = function(contract)
 		questState.completed = false
 		questState.progress = 0
+
 		local package = getRarityPackage(questState.activeRarity)
 		local settings = QuestSettings.Capture
 		local objectiveMultiplier = package.Objective or 1
 		local chaosMultiplier = package.Chaos or 1
 		local decayMultiplier = package.Decay or 1
-
 		questState.target = math.floor(((contract.Settings.RequiredProgressBase or settings.RequiredProgressBase) * objectiveMultiplier) + 0.5)
 
 		cleanupCaptureRuntime()
 
-		local rootFolder = workspace:FindFirstChild(settings.RootFolderName)
+		local rootFolder = getQuestAssetCaptureRoot()
 		local captureFolder = rootFolder and rootFolder:FindFirstChild(settings.CapturePointFolderName)
 		local waypointFolder = rootFolder and rootFolder:FindFirstChild(settings.WaypointFolderName)
 		if not (captureFolder and waypointFolder) then
-			warn("QuestService: Capture quest folders missing.")
+			warn("QuestService: Capture quest folders missing from QuestAssets.")
 			return
 		end
 
@@ -16206,6 +16268,7 @@ questHandlers.CapturePoint = {
 			return
 		end
 
+		local runtimeRoot = ensureQuestRuntimeFolder()
 		local model = template:Clone()
 		model.Name = "ActiveCapturePoint"
 		for _, d in ipairs(model:GetDescendants()) do
@@ -16213,7 +16276,7 @@ questHandlers.CapturePoint = {
 				d:Destroy()
 			end
 		end
-		model.Parent = workspace
+		model.Parent = runtimeRoot
 
 		local base = model:FindFirstChild(settings.BasePartName, true)
 		local radiusPart = findFirstByNames(model, settings.RadiusPartNames)
@@ -16274,9 +16337,9 @@ questHandlers.CapturePoint = {
 			if runtime.progressAccumulator < checkInterval then
 				return
 			end
+
 			local stepDt = runtime.progressAccumulator
 			runtime.progressAccumulator = 0
-
 			local inside = false
 			for _, player in ipairs(Players:GetPlayers()) do
 				local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
@@ -16302,10 +16365,7 @@ questHandlers.CapturePoint = {
 		end
 
 		runtime.loopConnection = RunService.Heartbeat:Connect(function(dt)
-			if questState.captureRuntime ~= runtime then
-				return
-			end
-			if questState.completed then
+			if questState.captureRuntime ~= runtime or questState.completed then
 				return
 			end
 
@@ -16347,7 +16407,6 @@ questHandlers.CapturePoint = {
 
 			local transitioning = math.abs(runtime.currentSpeed - settings.BaseMoveSpeed) > 0.05 or math.abs(runtime.currentSpeed - runtime.targetSpeed) > 0.05
 			local isPaused = now < runtime.pauseUntil
-
 			if not isPaused then
 				local targetPart = runtime.waypoints[runtime.targetIndex]
 				local currentPos = runtime.model:GetPivot().Position
@@ -16360,8 +16419,7 @@ questHandlers.CapturePoint = {
 					nextPos = targetPart.Position
 					runtime.currentIndex = runtime.targetIndex
 
-					local reverseChance = math.clamp(settings.ReverseChance * chaosMultiplier, 0, 1)
-					if math.random() < reverseChance then
+					if math.random() < math.clamp(settings.ReverseChance * chaosMultiplier, 0, 1) then
 						runtime.direction *= -1
 						playOneShot(settings.SoundIds.Reverse)
 					end
@@ -16374,8 +16432,7 @@ questHandlers.CapturePoint = {
 					nextPos = currentPos + (toTarget.Unit * travel)
 				end
 
-				local rotationMultiplier = runtime.currentSpeed / settings.BaseMoveSpeed
-				local rotationSpeed = settings.RotationSpeedBase * math.max(1, rotationMultiplier)
+				local rotationSpeed = settings.RotationSpeedBase * math.max(1, runtime.currentSpeed / settings.BaseMoveSpeed)
 				runtime.yaw += math.rad(rotationSpeed) * dt
 				runtime.model:PivotTo(CFrame.new(nextPos) * CFrame.Angles(0, runtime.yaw, 0))
 			end
@@ -16385,7 +16442,7 @@ questHandlers.CapturePoint = {
 	end,
 	stop = function(failed)
 		clearQuestConnections()
-		if failed and (not questState.completed) then
+		if failed and not questState.completed then
 			cleanupCaptureRuntime("fail")
 		else
 			cleanupCaptureRuntime()
@@ -16397,6 +16454,7 @@ local function startNightlyQuest(contract)
 	clearQuestConnections()
 	cleanupCaptureRuntime()
 	deactivatePageQuest()
+	clearQuestRuntimeFolder()
 
 	questState.activeContract = contract
 	questState.activeRarity = ActiveContractRarity.Value ~= "" and ActiveContractRarity.Value or "Uncommon"
@@ -16428,6 +16486,7 @@ local function stopNightlyQuest()
 	end
 	cleanupCaptureRuntime()
 	deactivatePageQuest()
+	clearQuestRuntimeFolder()
 	questState.activeContract = nil
 	questState.completed = false
 	questState.progress = 0
@@ -16539,8 +16598,7 @@ local function updateDistanceTracking()
 		if root then
 			local last = questState.playerLastPositions[player]
 			if last then
-				local delta = (root.Position - last)
-				local distance = delta.Magnitude
+				local distance = (root.Position - last).Magnitude
 				if distance >= cfg.MinSpeedToCount then
 					questState.playerDistances[player] = (questState.playerDistances[player] or 0) + distance
 				end
@@ -16558,10 +16616,11 @@ local function getResolvedContractData(player)
 
 	local activeRarity = ActiveContractRarity.Value ~= "" and ActiveContractRarity.Value or "Uncommon"
 	local rarityData = RarityConfig.Rarities[activeRarity]
-	local threat = contract.Threat or (rarityData and rarityData.DefaultThreat) or 0
+	local threat = (rarityData and rarityData.DefaultThreat) or contract.Threat or 0
 	local accepted = player:GetAttribute("AcceptedContractId") == contract.Id and player:GetAttribute("AcceptedContractDay") == DayIndex.Value
 	local objectiveMultiplier = getRarityPackage(activeRarity).Objective or 1
 	local objectives = table.clone(contract.Objectives or {})
+
 	if contract.Type == "SharedCollectCount" then
 		local count = QuestSettings.Pages.ByRarityCount[activeRarity] or math.floor(((contract.Settings.Count or 8) * objectiveMultiplier) + 0.5)
 		objectives[1] = string.format("Collect %d cursed pages", count)
@@ -16620,6 +16679,8 @@ end
 
 local lastIsDayRef = { value = isDaytime(Lighting:GetMinutesAfterMidnight()) }
 
+ensureQuestAssetsRoot()
+
 if lastIsDayRef.value then
 	DayIndex.Value = math.max(DayIndex.Value, 1)
 	if ActiveContractId.Value == "" then
@@ -16632,7 +16693,7 @@ else
 end
 
 ensureNpcPrompt(lastIsDayRef.value)
-resetAllPages()
+clearQuestRuntimeFolder()
 
 for _, player in ipairs(Players:GetPlayers()) do
 	registerDeathTracking(player)
@@ -16668,6 +16729,7 @@ task.spawn(function()
 		if not isDay and questState.activeContract then
 			updateDistanceTracking()
 		end
+
 		task.wait(1)
 	end
 end)
@@ -21092,6 +21154,15 @@ local function applyTheme(rarity)
 	end
 end
 
+
+local function updateThreatUI(threat, rarity)
+	local data = RarityConfig.Rarities[rarity] or RarityConfig.Rarities.Common
+	threatFill.Size = UDim2.new(math.clamp(threat / 100, 0, 1), 0, 1, 0)
+	threatFill.BackgroundColor3 = data.Theme.Accent
+	threatLabel.Text = string.format("THREAT: %s", RarityConfig.getThreatTier(threat))
+	threatValue.Text = tostring(threat)
+end
+
 local function setAcceptedState(accepted)
 	if accepted then
 		acceptButton.Text = "CONTRACT ACCEPTED"
@@ -21157,9 +21228,7 @@ ShowContractUI.OnClientEvent:Connect(function(data)
 	objectives.CanvasSize = UDim2.new(0, 0, 0, objectivesLayout.AbsoluteContentSize.Y + 6)
 
 	local threat = data.Threat or 0
-	threatFill.Size = UDim2.new(math.clamp(threat / 100, 0, 1), 0, 1, 0)
-	threatLabel.Text = string.format("THREAT: %s", RarityConfig.getThreatTier(threat))
-	threatValue.Text = tostring(threat)
+	updateThreatUI(threat, data.Rarity)
 
 	rewardsLabel.Text = string.format("Rewards: %d survival + %d completion + %.2f/stud", data.Rewards.Survival, data.Rewards.Completion, data.Rewards.Distance)
 
