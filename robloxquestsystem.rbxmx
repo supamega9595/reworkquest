@@ -15670,15 +15670,24 @@ local function ensureQuestAssetsRoot()
 
 	local pagesName = QuestSettings.Pages.FolderName
 	local captureName = QuestSettings.Capture.RootFolderName
-	local workspacePages = workspace:FindFirstChild(pagesName)
-	local workspaceCapture = workspace:FindFirstChild(captureName)
 
-	if workspacePages and not assets:FindFirstChild(pagesName) then
-		workspacePages.Parent = assets
+	local function findAndAdopt(folderName)
+		if assets:FindFirstChild(folderName) then
+			return
+		end
+		local rsRootFolder = ReplicatedStorage:FindFirstChild(folderName)
+		if rsRootFolder and rsRootFolder ~= assets then
+			rsRootFolder.Parent = assets
+			return
+		end
+		local workspaceFolder = workspace:FindFirstChild(folderName)
+		if workspaceFolder then
+			workspaceFolder.Parent = assets
+		end
 	end
-	if workspaceCapture and not assets:FindFirstChild(captureName) then
-		workspaceCapture.Parent = assets
-	end
+
+	findAndAdopt(pagesName)
+	findAndAdopt(captureName)
 
 	questState.questAssetsFolder = assets
 	return assets
