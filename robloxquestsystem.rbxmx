@@ -16073,8 +16073,12 @@ local function cleanupCaptureRuntime(result)
 		end
 	end
 
-	if runtime.captureRoot and runtime.captureRoot.Parent then
-		runtime.captureRoot:Destroy()
+	if runtime.captureFolders then
+		for _, folder in ipairs(runtime.captureFolders) do
+			if folder and folder.Parent then
+				folder:Destroy()
+			end
+		end
 	elseif runtime.model and runtime.model.Parent then
 		runtime.model:Destroy()
 	end
@@ -16278,22 +16282,19 @@ questHandlers.CapturePoint = {
 		end
 
 		local runtimeRoot = ensureQuestRuntimeFolder()
-		local runtimeCaptureRoot = rootFolder:Clone()
-		runtimeCaptureRoot.Name = settings.RootFolderName
-		runtimeCaptureRoot.Parent = runtimeRoot
+		local runtimeCaptureFolder = captureFolder:Clone()
+		runtimeCaptureFolder.Name = settings.CapturePointFolderName
+		runtimeCaptureFolder.Parent = runtimeRoot
 
-		local runtimeCaptureFolder = runtimeCaptureRoot:FindFirstChild(settings.CapturePointFolderName)
-		local runtimeWaypointFolder = runtimeCaptureRoot:FindFirstChild(settings.WaypointFolderName)
-		if not (runtimeCaptureFolder and runtimeWaypointFolder) then
-			warn("QuestService: Runtime capture quest clone is missing required folders.")
-			runtimeCaptureRoot:Destroy()
-			return
-		end
+		local runtimeWaypointFolder = waypointFolder:Clone()
+		runtimeWaypointFolder.Name = settings.WaypointFolderName
+		runtimeWaypointFolder.Parent = runtimeRoot
 
 		local model = findFirstByNames(runtimeCaptureFolder, settings.CaptureModelNames)
 		if not (model and model:IsA("Model")) then
 			warn("QuestService: Runtime capture model not found.")
-			runtimeCaptureRoot:Destroy()
+			runtimeCaptureFolder:Destroy()
+			runtimeWaypointFolder:Destroy()
 			return
 		end
 
@@ -16307,7 +16308,8 @@ questHandlers.CapturePoint = {
 		local waypoints = getSortedWaypoints(runtimeWaypointFolder, settings.WaypointNamePattern)
 		if #waypoints < 2 then
 			warn("QuestService: Capture waypoints require at least 2 parts.")
-			runtimeCaptureRoot:Destroy()
+			runtimeCaptureFolder:Destroy()
+			runtimeWaypointFolder:Destroy()
 			return
 		end
 
@@ -16333,7 +16335,7 @@ questHandlers.CapturePoint = {
 
 		local radius = math.max(radiusPart.Size.X, radiusPart.Size.Z) * 0.5
 		local runtime = {
-			captureRoot = runtimeCaptureRoot,
+			captureFolders = { runtimeCaptureFolder, runtimeWaypointFolder },
 			model = model,
 			base = base,
 			radius = radius,
