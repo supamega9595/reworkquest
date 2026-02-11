@@ -16063,13 +16063,19 @@ local function cleanupCaptureRuntime(result)
 		runtime.loopConnection = nil
 	end
 
-	if runtime.model and runtime.model.Parent then
-		local pos = runtime.base and runtime.base.Position or runtime.model:GetPivot().Position
+	local anchor = runtime.base or (runtime.model and runtime.model:FindFirstChildWhichIsA("BasePart"))
+	if anchor then
+		local pos = anchor.Position
 		if result == "success" then
 			playWorldSound(pos, QuestSettings.Capture.SoundIds.Success)
 		elseif result == "fail" then
 			playWorldSound(pos, QuestSettings.Capture.SoundIds.Fail)
 		end
+	end
+
+	if runtime.captureRoot and runtime.captureRoot.Parent then
+		runtime.captureRoot:Destroy()
+	elseif runtime.model and runtime.model.Parent then
 		runtime.model:Destroy()
 	end
 
@@ -16260,7 +16266,7 @@ questHandlers.CapturePoint = {
 		local rootFolder = getQuestAssetCaptureRoot()
 		local captureFolder = rootFolder and rootFolder:FindFirstChild(settings.CapturePointFolderName)
 		local waypointFolder = rootFolder and rootFolder:FindFirstChild(settings.WaypointFolderName)
-		if not (captureFolder and waypointFolder) then
+		if not (rootFolder and captureFolder and waypointFolder) then
 			warn("QuestService: Capture quest folders missing from QuestAssets.")
 			return
 		end
@@ -16271,21 +16277,39 @@ questHandlers.CapturePoint = {
 			return
 		end
 
-		local waypoints = getSortedWaypoints(waypointFolder, settings.WaypointNamePattern)
-		if #waypoints < 2 then
-			warn("QuestService: Capture waypoints require at least 2 parts.")
+		local runtimeRoot = ensureQuestRuntimeFolder()
+		local runtimeCaptureRoot = rootFolder:Clone()
+		runtimeCaptureRoot.Name = settings.RootFolderName
+		runtimeCaptureRoot.Parent = runtimeRoot
+
+		local runtimeCaptureFolder = runtimeCaptureRoot:FindFirstChild(settings.CapturePointFolderName)
+		local runtimeWaypointFolder = runtimeCaptureRoot:FindFirstChild(settings.WaypointFolderName)
+		if not (runtimeCaptureFolder and runtimeWaypointFolder) then
+			warn("QuestService: Runtime capture quest clone is missing required folders.")
+			runtimeCaptureRoot:Destroy()
 			return
 		end
 
-		local runtimeRoot = ensureQuestRuntimeFolder()
-		local model = template:Clone()
+		local model = findFirstByNames(runtimeCaptureFolder, settings.CaptureModelNames)
+		if not (model and model:IsA("Model")) then
+			warn("QuestService: Runtime capture model not found.")
+			runtimeCaptureRoot:Destroy()
+			return
+		end
+
 		model.Name = "ActiveCapturePoint"
 		for _, d in ipairs(model:GetDescendants()) do
 			if d:IsA("Script") or d:IsA("LocalScript") then
 				d:Destroy()
 			end
 		end
-		model.Parent = runtimeRoot
+
+		local waypoints = getSortedWaypoints(runtimeWaypointFolder, settings.WaypointNamePattern)
+		if #waypoints < 2 then
+			warn("QuestService: Capture waypoints require at least 2 parts.")
+			runtimeCaptureRoot:Destroy()
+			return
+		end
 
 		local base = model:FindFirstChild(settings.BasePartName, true)
 		local radiusPart = findFirstByNames(model, settings.RadiusPartNames)
@@ -16309,6 +16333,7 @@ questHandlers.CapturePoint = {
 
 		local radius = math.max(radiusPart.Size.X, radiusPart.Size.Z) * 0.5
 		local runtime = {
+			captureRoot = runtimeCaptureRoot,
 			model = model,
 			base = base,
 			radius = radius,
