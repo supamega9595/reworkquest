@@ -11533,6 +11533,32 @@ return RarityConfig]]></ProtectedString>
 		},
 	},
 	{
+		Id = "capture_ring",
+		Name = "Containment Ring",
+		Rarity = "Epic",
+		Threat = 55,
+		Description = "Hold the moving containment circle until full stabilization.",
+		Objectives = {
+			"Stand inside the moving ring to build progress",
+			"Maintain control before dawn",
+		},
+		Type = "CaptureQuest",
+		Settings = {
+			RequiredProgressBase = 240,
+			GainRate = 1,
+			DecayPercent = 0.50,
+			WaypointPauseSeconds = 3,
+			ReverseChance = 0.10,
+			BurstCheckInterval = 20,
+			BurstChance = 0.50,
+			BurstDurationMin = 5,
+			BurstDurationMax = 15,
+			BurstMultiplier = 2,
+			AccelTime = 1.25,
+			DecelTime = 1.25,
+		},
+	},
+	{
 		Id = "butterfly_crate",
 		Name = "Butterfly Crate",
 		Rarity = "Legendary",
@@ -11546,8 +11572,9 @@ return RarityConfig]]></ProtectedString>
 			CrateTag = "QuestPickup_Crate",
 			DropTag = "QuestDrop_Crate",
 		},
-		},
-	}]]></ProtectedString>
+	},
+}
+]]></ProtectedString>
 					<string name="ScriptGuid">{2d5db30d-9156-49b3-813c-4c0d087788d3}</string>
 					<BinaryString name="AttributesSerialize"></BinaryString>
 					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
@@ -11563,6 +11590,8 @@ return RarityConfig]]></ProtectedString>
 					<ProtectedString name="Source"><![CDATA[return {
 	ForceContract = true,
 	ForcedContractId = "daily_pages",
+	RuntimeFolderName = "QuestRuntime",
+	QuestSpawnsFolderName = "QuestSpawns",
 	Pages = {
 		FolderName = "QuestSpawns",
 		PagesFolderName = "Pages",
@@ -11572,7 +11601,8 @@ return RarityConfig]]></ProtectedString>
 	SummaryUI = {
 		AutoCloseSeconds = 10,
 	},
-}]]></ProtectedString>
+}
+]]></ProtectedString>
 					<string name="ScriptGuid">{7c1fe18f-5c3e-4ff8-acde-9f2ca67b7a14}</string>
 					<BinaryString name="AttributesSerialize"></BinaryString>
 					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
@@ -13152,6 +13182,7 @@ end)
 local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
 local CollectionService = game:GetService("CollectionService")
+local RunService = game:GetService("RunService")
 
 local QuestSystem = ReplicatedStorage:WaitForChild("QuestSystem")
 local Config = QuestSystem:WaitForChild("Config")
@@ -13199,8 +13230,7 @@ local function chooseDailyContract()
 		warn("QuestContractsConfig has no contracts configured.")
 		return nil
 	end
-	local index = math.random(1, #QuestContractsConfig)
-	return QuestContractsConfig[index]
+	return QuestContractsConfig[math.random(1, #QuestContractsConfig)]
 end
 
 local questState = {
@@ -13215,6 +13245,10 @@ local questState = {
 	playerDied = {},
 	playerDeathConnections = {},
 	activePages = {},
+	nightEligibleUserIds = {},
+	runtimeFolder = nil,
+	runtimeQuestRoot = nil,
+	captureState = nil,
 }
 
 local function clearQuestConnections()
@@ -13222,6 +13256,85 @@ local function clearQuestConnections()
 		connection:Disconnect()
 	end
 	questState.connections = {}
+end
+
+local function clearCaptureState()
+	local captureState = questState.captureState
+	if not captureState then
+		return
+	end
+	captureState.running = false
+	for _, connection in ipairs(captureState.connections) do
+		connection:Disconnect()
+	end
+	captureState.connections = {}
+	for _, thread in ipairs(captureState.threads) do
+		task.cancel(thread)
+	end
+	captureState.threads = {}
+	if captureState.burstLoopSound then
+		captureState.burstLoopSound:Stop()
+		captureState.burstLoopSound:Destroy()
+	end
+	questState.captureState = nil
+end
+
+local function destroyRuntimeFolder()
+	if questState.runtimeFolder and questState.runtimeFolder.Parent then
+		questState.runtimeFolder:Destroy()
+	end
+	questState.runtimeFolder = nil
+	questState.runtimeQuestRoot = nil
+end
+
+local function cleanupNightRuntime()
+	clearCaptureState()
+	destroyRuntimeFolder()
+end
+
+local function createRuntimeRoot(contract)
+	destroyRuntimeFolder()
+	local runtimeFolder = Instance.new("Folder")
+	runtimeFolder.Name = "QuestRuntime"
+	runtimeFolder.Parent = workspace
+	questState.runtimeFolder = runtimeFolder
+
+	local spawns = ReplicatedStorage:FindFirstChild("QuestSpawns")
+	if not spawns then
+		warn("QuestService: ReplicatedStorage.QuestSpawns missing.")
+		return nil
+	end
+
+	local templateName
+	if contract.Type == "CaptureQuest" then
+		templateName = "CaptureQuest"
+	else
+		templateName = "Pages"
+	end
+
+	local templateRoot = spawns:FindFirstChild(templateName)
+	if not templateRoot then
+		warn("QuestService: Missing quest template root:", templateName)
+		return nil
+	end
+
+	local runtimeRoot = templateRoot:Clone()
+	runtimeRoot.Parent = runtimeFolder
+	questState.runtimeQuestRoot = runtimeRoot
+	return runtimeRoot
+end
+
+local function isPlayerAlive(player)
+	local character = player.Character
+	if not character then
+		return false
+	end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	return humanoid and humanoid.Health > 0 or false
+end
+
+local function isNightEligible(player)
+	return questState.nightEligibleUserIds[player.UserId] == true
 end
 
 local function getPlayerFromHit(hit)
@@ -13252,11 +13365,11 @@ local function getPickupBasePart(instance)
 end
 
 local function getQuestPagesFolder()
-	local questSpawns = workspace:FindFirstChild(QuestSettings.Pages.FolderName)
-	if not questSpawns then
+	local runtime = workspace:FindFirstChild("QuestRuntime")
+	if not runtime then
 		return nil
 	end
-	return questSpawns:FindFirstChild(QuestSettings.Pages.PagesFolderName)
+	return runtime:FindFirstChild("Pages")
 end
 
 local function recordPartDefaults(part)
@@ -13282,11 +13395,7 @@ end
 
 local function setSurfaceVisibility(surface, isActive)
 	recordSurfaceDefaults(surface)
-	if isActive then
-		surface.Transparency = surface:GetAttribute("QuestDefaultTransparency") or surface.Transparency
-	else
-		surface.Transparency = 1
-	end
+	surface.Transparency = isActive and (surface:GetAttribute("QuestDefaultTransparency") or surface.Transparency) or 1
 end
 
 local function setPartVisibility(part, isActive)
@@ -13302,7 +13411,6 @@ local function setPartVisibility(part, isActive)
 		part.CanTouch = false
 		part.CanQuery = false
 	end
-
 	for _, child in ipairs(part:GetChildren()) do
 		if child:IsA("Decal") or child:IsA("Texture") then
 			setSurfaceVisibility(child, isActive)
@@ -13314,11 +13422,7 @@ local function setPromptVisibility(prompt, isActive)
 	if prompt:GetAttribute("QuestDefaultEnabled") == nil then
 		prompt:SetAttribute("QuestDefaultEnabled", prompt.Enabled)
 	end
-	if isActive then
-		prompt.Enabled = prompt:GetAttribute("QuestDefaultEnabled") ~= false
-	else
-		prompt.Enabled = false
-	end
+	prompt.Enabled = isActive and prompt:GetAttribute("QuestDefaultEnabled") ~= false
 end
 
 local function setPageActive(page, isActive)
@@ -13442,25 +13546,23 @@ end
 
 local function hideCollectedPage(instance)
 	local page = findPageRoot(instance) or instance
-	if page then
-		local part = page:IsA("BasePart") and page or page:FindFirstChildWhichIsA("BasePart")
-		if part then
-			local sound = Instance.new("Sound")
-			sound.Name = "QuestPageCollectSound"
-			sound.SoundId = "rbxassetid://131858956380043"
-			sound.Volume = 1
-			sound.RollOffMode = Enum.RollOffMode.Inverse
-			sound.RollOffMaxDistance = 35
-			sound.RollOffMinDistance = 6
-			sound.Parent = part
-			sound:Play()
-			sound.Ended:Connect(function()
-				sound:Destroy()
-			end)
-		end
-		setPageActive(page, false)
-		removeQuestPickupTags(page)
+	if not page then
+		return
 	end
+	local part = page:IsA("BasePart") and page or page:FindFirstChildWhichIsA("BasePart")
+	if part then
+		local sound = Instance.new("Sound")
+		sound.SoundId = "rbxassetid://131858956380043"
+		sound.Volume = 1
+		sound.RollOffMode = Enum.RollOffMode.Inverse
+		sound.RollOffMinDistance = 6
+		sound.RollOffMaxDistance = 35
+		sound.Parent = part
+		sound:Play()
+		sound.Ended:Connect(function() sound:Destroy() end)
+	end
+	setPageActive(page, false)
+	removeQuestPickupTags(page)
 end
 
 local function registerDeathTracking(player)
@@ -13472,8 +13574,7 @@ local function registerDeathTracking(player)
 		end
 		local humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid", 5)
 		if humanoid then
-			local connection
-			connection = humanoid.Died:Connect(function()
+			local connection = humanoid.Died:Connect(function()
 				questState.playerDied[player] = true
 			end)
 			questState.playerDeathConnections[player] = connection
@@ -13487,64 +13588,60 @@ end
 
 local function ensureNpcPrompt(isDay)
 	local npc = workspace:FindFirstChild("showcase npc")
-	if not npc then
-		warn("QuestService: NPC 'showcase npc' not found in Workspace.")
-		return
-	end
-
+	if not npc then return end
 	local templateFolder = workspace:FindFirstChild("Custom Prompts")
 	local promptTemplate = templateFolder and templateFolder:FindFirstChild("Prompt1")
-	if not promptTemplate then
-		warn("QuestService: Prompt1 template not found in Workspace > Custom Prompts.")
-		return
-	end
-
-	local templatePrompt = promptTemplate:FindFirstChildOfClass("ProximityPrompt")
-	if not templatePrompt then
-		warn("QuestService: ProximityPrompt missing from Prompt1 template.")
-		return
-	end
+	local templatePrompt = promptTemplate and promptTemplate:FindFirstChildOfClass("ProximityPrompt")
+	if not templatePrompt then return end
 
 	local existingPrompt = npc:FindFirstChildOfClass("ProximityPrompt")
-	if existingPrompt then
-		existingPrompt:Destroy()
-	end
+	if existingPrompt then existingPrompt:Destroy() end
 
 	local clonedPrompt = templatePrompt:Clone()
 	clonedPrompt.Name = "ProximityPrompt"
 	clonedPrompt.ActionText = DialogueConfig.PromptActionText
 	clonedPrompt.ObjectText = DialogueConfig.PromptObjectText
 	clonedPrompt.Parent = npc
-
 	CollectionService:AddTag(clonedPrompt, "NPCprompt")
 
 	local conf = clonedPrompt:FindFirstChild("CustomPromptConf")
-	if conf then
-		local custom = conf:FindFirstChild("CustomPrompt")
-		local nameValue = custom and custom:FindFirstChild("PromptName")
-		if nameValue and nameValue:IsA("StringValue") then
-			nameValue.Value = isDay and "Prompt1" or "Prompt2"
-		end
+	local custom = conf and conf:FindFirstChild("CustomPrompt")
+	local nameValue = custom and custom:FindFirstChild("PromptName")
+	if nameValue and nameValue:IsA("StringValue") then
+		nameValue.Value = isDay and "Prompt1" or "Prompt2"
 	end
 end
 
 local function updatePromptStyle(isDay)
 	local npc = workspace:FindFirstChild("showcase npc")
-	if not npc then
-		return
-	end
-	local prompt = npc:FindFirstChildOfClass("ProximityPrompt")
-	if not prompt then
-		return
-	end
+	local prompt = npc and npc:FindFirstChildOfClass("ProximityPrompt")
+	if not prompt then return end
 	local conf = prompt:FindFirstChild("CustomPromptConf")
-	if conf then
-		local custom = conf:FindFirstChild("CustomPrompt")
-		local nameValue = custom and custom:FindFirstChild("PromptName")
-		if nameValue and nameValue:IsA("StringValue") then
-			nameValue.Value = isDay and "Prompt1" or "Prompt2"
-		end
+	local custom = conf and conf:FindFirstChild("CustomPrompt")
+	local nameValue = custom and custom:FindFirstChild("PromptName")
+	if nameValue and nameValue:IsA("StringValue") then
+		nameValue.Value = isDay and "Prompt1" or "Prompt2"
 	end
+end
+
+local function play3DSound(soundId, parentPart, maxDistance)
+	if not parentPart or not parentPart.Parent then
+		return nil
+	end
+	local sound = Instance.new("Sound")
+	sound.SoundId = soundId
+	sound.RollOffMode = Enum.RollOffMode.Inverse
+	sound.RollOffMinDistance = 10
+	sound.RollOffMaxDistance = maxDistance or 2000
+	sound.Volume = 1
+	sound.Parent = parentPart
+	sound:Play()
+	sound.Ended:Connect(function()
+		if sound.Parent then
+			sound:Destroy()
+		end
+	end)
+	return sound
 end
 
 local questHandlers = {}
@@ -13558,9 +13655,7 @@ questHandlers.SharedCollectCount = {
 		local collected = {}
 
 		local function registerPickup(instance)
-			if collected[instance] then
-				return
-			end
+			if collected[instance] then return end
 			collected[instance] = true
 			if pickupTag == QuestSettings.Pages.PickupTag then
 				hideCollectedPage(instance)
@@ -13573,31 +13668,22 @@ questHandlers.SharedCollectCount = {
 
 		local function connectInstance(instance)
 			local part = getPickupBasePart(instance)
-			if not part then
-				return
-			end
+			if not part then return end
 			if instance:IsA("ProximityPrompt") then
-				local connection = instance.Triggered:Connect(function()
-					registerPickup(instance)
-				end)
-				table.insert(questState.connections, connection)
+				table.insert(questState.connections, instance.Triggered:Connect(function() registerPickup(instance) end))
 			else
-				local connection = part.Touched:Connect(function(hit)
-					local player = getPlayerFromHit(hit)
-					if player then
+				table.insert(questState.connections, part.Touched:Connect(function(hit)
+					if getPlayerFromHit(hit) then
 						registerPickup(instance)
 					end
-				end)
-				table.insert(questState.connections, connection)
+				end))
 			end
 		end
 
 		for _, instance in ipairs(CollectionService:GetTagged(pickupTag)) do
 			connectInstance(instance)
 		end
-
-		local added = CollectionService:GetInstanceAddedSignal(pickupTag):Connect(connectInstance)
-		table.insert(questState.connections, added)
+		table.insert(questState.connections, CollectionService:GetInstanceAddedSignal(pickupTag):Connect(connectInstance))
 	end,
 	stop = function()
 		clearQuestConnections()
@@ -13609,46 +13695,33 @@ questHandlers.DeliverItem = {
 		questState.completed = false
 		questState.progress = 0
 		questState.target = 1
-
 		local crateTag = contract.Settings.CrateTag
 		local dropTag = contract.Settings.DropTag
 
 		local function markPicked(crate, player)
-			if not player then
-				return
+			if player then
+				crate:SetAttribute("QuestCarrierUserId", player.UserId)
 			end
-			crate:SetAttribute("QuestCarrierUserId", player.UserId)
 		end
 
 		local function connectCrate(crate)
 			local part = getPickupBasePart(crate)
-			if not part then
-				return
-			end
-
+			if not part then return end
 			local prompt = crate:FindFirstChildOfClass("ProximityPrompt")
 			if prompt then
-				local connection = prompt.Triggered:Connect(function(player)
-					markPicked(crate, player)
-				end)
-				table.insert(questState.connections, connection)
+				table.insert(questState.connections, prompt.Triggered:Connect(function(player) markPicked(crate, player) end))
 			else
-				local connection = part.Touched:Connect(function(hit)
+				table.insert(questState.connections, part.Touched:Connect(function(hit)
 					local player = getPlayerFromHit(hit)
-					if player then
-						markPicked(crate, player)
-					end
-				end)
-				table.insert(questState.connections, connection)
+					if player then markPicked(crate, player) end
+				end))
 			end
 		end
 
 		local function getCrateFromHit(hit)
 			local node = hit
 			while node and node ~= workspace do
-				if CollectionService:HasTag(node, crateTag) then
-					return node
-				end
+				if CollectionService:HasTag(node, crateTag) then return node end
 				node = node.Parent
 			end
 			return nil
@@ -13656,26 +13729,18 @@ questHandlers.DeliverItem = {
 
 		local function connectDrop(drop)
 			local part = getPickupBasePart(drop)
-			if not part then
-				return
-			end
-			local connection = part.Touched:Connect(function(hit)
+			if not part then return end
+			table.insert(questState.connections, part.Touched:Connect(function(hit)
 				local crate = getCrateFromHit(hit)
 				if crate and crate:GetAttribute("QuestCarrierUserId") then
 					questState.completed = true
 					questState.progress = 1
 				end
-			end)
-			table.insert(questState.connections, connection)
+			end))
 		end
 
-		for _, crate in ipairs(CollectionService:GetTagged(crateTag)) do
-			connectCrate(crate)
-		end
-		for _, drop in ipairs(CollectionService:GetTagged(dropTag)) do
-			connectDrop(drop)
-		end
-
+		for _, crate in ipairs(CollectionService:GetTagged(crateTag)) do connectCrate(crate) end
+		for _, drop in ipairs(CollectionService:GetTagged(dropTag)) do connectDrop(drop) end
 		table.insert(questState.connections, CollectionService:GetInstanceAddedSignal(crateTag):Connect(connectCrate))
 		table.insert(questState.connections, CollectionService:GetInstanceAddedSignal(dropTag):Connect(connectDrop))
 	end,
@@ -13684,15 +13749,227 @@ questHandlers.DeliverItem = {
 	end,
 }
 
+questHandlers.CaptureQuest = {
+	start = function(contract)
+		local captureRoot = questState.runtimeQuestRoot
+		if not captureRoot or captureRoot.Name ~= "CaptureQuest" then
+			warn("QuestService: runtime CaptureQuest root missing.")
+			return
+		end
+
+		print("[QuestService] runtimeCapture path: Workspace.QuestRuntime.CaptureQuest")
+		local capCircle = captureRoot:FindFirstChild("CapCircle")
+		print("[QuestService] CapCircle exists:", capCircle ~= nil)
+		local basePart = capCircle and capCircle:FindFirstChild("Base")
+		print("[QuestService] Base exists:", basePart ~= nil)
+		local radiusPart = capCircle and capCircle:FindFirstChild("Circle3")
+		print("[QuestService] Circle3 exists:", radiusPart ~= nil)
+		if not (capCircle and capCircle:IsA("Model") and basePart and basePart:IsA("BasePart") and radiusPart and radiusPart:IsA("BasePart")) then
+			warn("QuestService: Capture quest runtime validation failed.")
+			return
+		end
+
+		local waypoints = {}
+		for _, child in ipairs(captureRoot:GetChildren()) do
+			if child:IsA("BasePart") then
+				local idx = tonumber(string.match(child.Name, "^Part(%d+)$"))
+				if idx then
+					table.insert(waypoints, {index = idx, part = child})
+				end
+			end
+		end
+		table.sort(waypoints, function(a, b) return a.index < b.index end)
+		local names = {}
+		for i = 1, math.min(5, #waypoints) do
+			table.insert(names, waypoints[i].part.Name)
+		end
+		print("[QuestService] Capture waypoints:", #waypoints, table.concat(names, ", "))
+		if #waypoints == 0 then
+			warn("[QuestService] CaptureQuest has ZERO waypoints; aborting capture logic.")
+			return
+		end
+
+		for _, waypoint in ipairs(waypoints) do
+			waypoint.part.Anchored = true
+			waypoint.part.CanCollide = false
+		end
+
+		local settings = contract.Settings or {}
+		local baseSpeed = settings.BaseSpeed or 14
+		local burstMultiplier = settings.BurstMultiplier or 2
+		local accelerationTime = settings.AccelTime or 1.25
+		local decelerationTime = settings.DecelTime or 1.25
+		local waypointPauseSeconds = settings.WaypointPauseSeconds or 3
+		local reverseChance = settings.ReverseChance or 0.10
+		local burstCheckInterval = settings.BurstCheckInterval or 20
+		local burstChance = settings.BurstChance or 0.50
+		local burstDurationMin = settings.BurstDurationMin or 5
+		local burstDurationMax = settings.BurstDurationMax or 15
+		local gainRate = settings.GainRate or 1
+		local decayPercent = settings.DecayPercent or 0.50
+		local progressTick = settings.ProgressTickInterval or 0.25
+		local required = settings.RequiredProgressBase or 240
+		local rotationBaseDeg = settings.BaseRotationDegPerSecond or 20
+
+		questState.target = required
+		questState.progress = 0
+		questState.completed = false
+
+		local radius = ((radiusPart.Size.X * 0.5) + (radiusPart.Size.Z * 0.5)) * 0.5
+		local state = {
+			running = true,
+			connections = {},
+			threads = {},
+			basePart = basePart,
+			captureRoot = captureRoot,
+			burstLoopSound = nil,
+			burstActive = false,
+			targetSpeed = baseSpeed,
+			currentSpeed = baseSpeed,
+			pauseUntil = 0,
+			rotationYaw = 0,
+			direction = 1,
+		}
+		questState.captureState = state
+
+		local n = #waypoints
+		local currentIndex = math.random(1, n)
+		local function wrappedIndex(idx)
+			if idx < 1 then return n end
+			if idx > n then return 1 end
+			return idx
+		end
+		local targetIndex = wrappedIndex(currentIndex + state.direction)
+		local currentPosition = waypoints[currentIndex].part.Position
+		capCircle:PivotTo(CFrame.new(currentPosition))
+		print(string.format("[QuestService] Capture start waypoint index: %d total: %d", currentIndex, n))
+
+		local function smoothingAlpha(dt)
+			local target = state.targetSpeed
+			local isAccelerating = target > state.currentSpeed
+			local t = isAccelerating and accelerationTime or decelerationTime
+			if t <= 0 then return 1 end
+			return math.clamp(dt / t, 0, 1)
+		end
+
+		local function inTransition()
+			return math.abs(state.currentSpeed - state.targetSpeed) > 0.2
+		end
+
+		local burstThread = task.spawn(function()
+			while state.running do
+				task.wait(burstCheckInterval)
+				if not state.running then break end
+				if math.random() <= burstChance then
+					local duration = burstDurationMin + math.random() * (burstDurationMax - burstDurationMin)
+					print(string.format("Burst triggered: duration %.2f", duration))
+					play3DSound("rbxassetid://122534507946416", basePart, 200)
+					state.burstActive = true
+					state.targetSpeed = baseSpeed * burstMultiplier
+					task.wait(duration)
+					if state.running then
+						state.burstActive = false
+						state.targetSpeed = baseSpeed
+					end
+				end
+			end
+		end)
+		table.insert(state.threads, burstThread)
+
+		local progressThread = task.spawn(function()
+			while state.running do
+				task.wait(progressTick)
+				if not state.running then break end
+				local inside = false
+				for _, player in ipairs(Players:GetPlayers()) do
+					local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+					if root and (root.Position - basePart.Position).Magnitude <= radius then
+						inside = true
+						break
+					end
+				end
+				local delta = gainRate * progressTick
+				if inside then
+					questState.progress = math.clamp(questState.progress + delta, 0, required)
+				else
+					questState.progress = math.clamp(questState.progress - (delta * decayPercent), 0, required)
+				end
+				if questState.progress >= required and not questState.completed then
+					questState.completed = true
+					print("Capture quest completed")
+					if state.burstLoopSound then state.burstLoopSound:Stop() end
+					play3DSound("rbxassetid://135134898038127", basePart, 2000)
+					state.running = false
+					if captureRoot.Parent then
+						captureRoot:Destroy()
+					end
+				end
+			end
+		end)
+		table.insert(state.threads, progressThread)
+
+		local moveConnection = RunService.Heartbeat:Connect(function(dt)
+			if not state.running then return end
+			state.currentSpeed += (state.targetSpeed - state.currentSpeed) * smoothingAlpha(dt)
+			local rotationSpeed = rotationBaseDeg * (state.currentSpeed / baseSpeed)
+			state.rotationYaw += math.rad(rotationSpeed * dt)
+
+			local now = os.clock()
+			if now < state.pauseUntil then
+				capCircle:PivotTo(CFrame.new(currentPosition) * CFrame.Angles(0, state.rotationYaw, 0))
+				return
+			end
+
+			local targetPos = waypoints[targetIndex].part.Position
+			local offset = targetPos - currentPosition
+			local distance = offset.Magnitude
+			local step = state.currentSpeed * dt
+			if distance <= step or distance <= 0.001 then
+				currentPosition = targetPos
+				local reverseTriggered = math.random() < reverseChance
+				if reverseTriggered then
+					print("Reverse triggered")
+					play3DSound("rbxassetid://134113957270216", basePart, 200)
+					state.direction *= -1
+				end
+				currentIndex = targetIndex
+				targetIndex = wrappedIndex(currentIndex + state.direction)
+
+				local stableAtBase = not state.burstActive and not inTransition() and math.abs(state.currentSpeed - baseSpeed) < 0.2
+				if stableAtBase then
+					state.pauseUntil = now + waypointPauseSeconds
+				end
+			else
+				currentPosition += offset.Unit * step
+			end
+			capCircle:PivotTo(CFrame.new(currentPosition) * CFrame.Angles(0, state.rotationYaw, 0))
+		end)
+		table.insert(state.connections, moveConnection)
+	end,
+	stop = function(nightEnded)
+		local captureState = questState.captureState
+		if nightEnded and captureState and not questState.completed then
+			print("Capture quest failed")
+			play3DSound("rbxassetid://140251382260617", captureState.basePart, 2000)
+		end
+		clearCaptureState()
+	end,
+}
+
 local function startNightlyQuest(contract)
 	clearQuestConnections()
+	cleanupNightRuntime()
 	questState.activeContract = contract
 	questState.startTime = os.time()
 	questState.playerDistances = {}
 	questState.playerLastPositions = {}
+	questState.nightEligibleUserIds = {}
 	for _, player in ipairs(Players:GetPlayers()) do
 		questState.playerDied[player] = false
+		questState.nightEligibleUserIds[player.UserId] = true
 	end
+
+	createRuntimeRoot(contract)
 
 	local handler = questHandlers[contract.Type]
 	if handler and handler.start then
@@ -13701,45 +13978,46 @@ local function startNightlyQuest(contract)
 		warn("QuestService: No handler for quest type:", contract.Type)
 	end
 
-	if contract.Id == QuestSettings.ForcedContractId or (contract.Settings and contract.Settings.PickupTag == QuestSettings.Pages.PickupTag) then
+	if contract.Type == "SharedCollectCount" then
 		activatePageQuest()
 	end
 end
 
-local function stopNightlyQuest()
+local function stopNightlyQuest(nightEnded)
 	local contract = questState.activeContract
 	if contract then
 		local handler = questHandlers[contract.Type]
 		if handler and handler.stop then
-			handler.stop()
+			handler.stop(nightEnded)
 		end
 	end
 	deactivatePageQuest()
+	cleanupNightRuntime()
 	questState.activeContract = nil
 	questState.completed = false
 	questState.progress = 0
 	questState.target = 0
+	questState.nightEligibleUserIds = {}
 end
 
 local function calculateDistanceCash(distance)
 	local cfg = RewardsConfig.Distance
 	local softCap = cfg.SoftCapDistance
-	local postCapMultiplier = cfg.PostCapMultiplier
 	if distance <= softCap then
 		return distance * RewardsConfig.DistanceCashPerStud
 	end
 	local capped = softCap * RewardsConfig.DistanceCashPerStud
 	local remaining = distance - softCap
-	return capped + (remaining * RewardsConfig.DistanceCashPerStud * postCapMultiplier)
+	return capped + (remaining * RewardsConfig.DistanceCashPerStud * cfg.PostCapMultiplier)
 end
 
-local function calculateXP(distance, survived, completed)
+local function calculateXP(distance, survivalAwarded, completionAwarded)
 	local xpConfig = RewardsConfig.XP or {}
 	local total = 0
-	if survived then
+	if survivalAwarded then
 		total += xpConfig.SurvivalBase or 0
 	end
-	if completed then
+	if completionAwarded then
 		total += xpConfig.CompletionBonus or 0
 	end
 	total += distance * (xpConfig.DistancePerStud or 0)
@@ -13784,31 +14062,35 @@ end
 
 local function payoutNightRewards()
 	local contract = questState.activeContract
-	if not contract then
-		return
-	end
+	if not contract then return end
 	local rarityMultiplier = RewardsConfig.MultipliersByRarity[contract.Rarity] or 1
 
 	for _, player in ipairs(Players:GetPlayers()) do
-		local distance = questState.playerDistances[player] or 0
-		local survived = not questState.playerDied[player]
-		local survivalCash = RewardsConfig.SurvivalCashBase
-		local completionCash = questState.completed and RewardsConfig.QuestCompleteCash or 0
-		local distanceCash = calculateDistanceCash(distance)
-		local totalCash = (survivalCash + completionCash + distanceCash) * rarityMultiplier
-		local xpAward = calculateXP(distance, survived, questState.completed)
-		local winsAward = survived and 1 or 0
+		local eligible = isNightEligible(player)
+		local distance = eligible and (questState.playerDistances[player] or 0) or 0
+		local completionAwarded = eligible and questState.completed
+		local survivalAwarded = eligible and isPlayerAlive(player)
+		local survivalCash = survivalAwarded and (RewardsConfig.SurvivalCashBase * rarityMultiplier) or 0
+		local completionCash = completionAwarded and (RewardsConfig.QuestCompleteCash * rarityMultiplier) or 0
+		local distanceCash = eligible and calculateDistanceCash(distance) or 0
+		local totalCash = survivalCash + completionCash + distanceCash
+		local xpAward = eligible and calculateXP(distance, survivalAwarded, completionAwarded) or 0
+		if eligible then
+			local xpConfig = RewardsConfig.XP or {}
+			local distanceXP = distance * (xpConfig.DistancePerStud or 0)
+			local scaled = 0
+			if survivalAwarded then scaled += (xpConfig.SurvivalBase or 0) * rarityMultiplier end
+			if completionAwarded then scaled += (xpConfig.CompletionBonus or 0) * rarityMultiplier end
+			xpAward = math.floor(scaled + distanceXP)
+		end
+		local winsAward = survivalAwarded and 1 or 0
 
-		awardCash(player, totalCash)
-		if winsAward > 0 then
-			awardWins(player, winsAward)
-		end
-		if xpAward > 0 then
-			awardXP(player, xpAward)
-		end
+		if totalCash > 0 then awardCash(player, totalCash) end
+		if winsAward > 0 then awardWins(player, 1) end
+		if xpAward > 0 then awardXP(player, xpAward) end
 
 		ShowNightSummary:FireClient(player, {
-			Survived = survived,
+			Survived = survivalAwarded,
 			QuestCompleted = questState.completed,
 			Distance = distance,
 			CashAwarded = totalCash,
@@ -13821,33 +14103,29 @@ end
 local function updateDistanceTracking()
 	local cfg = RewardsConfig.Distance
 	for _, player in ipairs(Players:GetPlayers()) do
-		local character = player.Character
-		local root = character and character:FindFirstChild("HumanoidRootPart")
-		if root then
-			local last = questState.playerLastPositions[player]
-			if last then
-				local delta = (root.Position - last)
-				local distance = delta.Magnitude
-				local speed = distance
-				if speed >= cfg.MinSpeedToCount then
-					questState.playerDistances[player] = (questState.playerDistances[player] or 0) + distance
+		if isNightEligible(player) then
+			local character = player.Character
+			local root = character and character:FindFirstChild("HumanoidRootPart")
+			if root then
+				local last = questState.playerLastPositions[player]
+				if last then
+					local distance = (root.Position - last).Magnitude
+					if distance >= cfg.MinSpeedToCount then
+						questState.playerDistances[player] = (questState.playerDistances[player] or 0) + distance
+					end
 				end
+				questState.playerLastPositions[player] = root.Position
 			end
-			questState.playerLastPositions[player] = root.Position
 		end
 	end
 end
 
 local function getResolvedContractData(player)
 	local contract = getContractById(ActiveContractId.Value)
-	if not contract then
-		return nil
-	end
-
+	if not contract then return nil end
 	local rarityData = RarityConfig.Rarities[contract.Rarity]
 	local threat = contract.Threat or (rarityData and rarityData.DefaultThreat) or 0
 	local accepted = player:GetAttribute("AcceptedContractId") == contract.Id and player:GetAttribute("AcceptedContractDay") == DayIndex.Value
-
 	return {
 		Id = contract.Id,
 		Name = contract.Name,
@@ -13862,94 +14140,61 @@ local function getResolvedContractData(player)
 			Completion = RewardsConfig.QuestCompleteCash,
 			Distance = RewardsConfig.DistanceCashPerStud,
 		},
-	FlavorLine = DialogueConfig.BoardFlavor,
+		FlavorLine = DialogueConfig.BoardFlavor,
 	}
 end
 
 RequestContractUI.OnServerEvent:Connect(function(player)
-	local minutes = Lighting:GetMinutesAfterMidnight()
-	if not isDaytime(minutes) then
-		return
-	end
-
+	if not isDaytime(Lighting:GetMinutesAfterMidnight()) then return end
 	local data = getResolvedContractData(player)
-	if data then
-		ShowContractUI:FireClient(player, data)
-	end
+	if data then ShowContractUI:FireClient(player, data) end
 end)
 
 AcceptContract.OnServerEvent:Connect(function(player, contractId)
-	if contractId ~= ActiveContractId.Value then
-		return
-	end
-
-	local minutes = Lighting:GetMinutesAfterMidnight()
-	if not isDaytime(minutes) then
-		return
-	end
-
+	if contractId ~= ActiveContractId.Value then return end
+	if not isDaytime(Lighting:GetMinutesAfterMidnight()) then return end
 	player:SetAttribute("AcceptedContractId", contractId)
 	player:SetAttribute("AcceptedContractDay", DayIndex.Value)
 end)
 
 local function rollNewContract()
 	local contract = chooseDailyContract()
-	if contract then
-		ActiveContractId.Value = contract.Id
-	end
+	if contract then ActiveContractId.Value = contract.Id end
 end
 
-local lastIsDay = isDaytime(Lighting:GetMinutesAfterMidnight())
-
-if lastIsDay then
+local lastIsDayRef = { value = isDaytime(Lighting:GetMinutesAfterMidnight()) }
+if lastIsDayRef.value then
 	DayIndex.Value = math.max(DayIndex.Value, 1)
-	if ActiveContractId.Value == "" then
-		rollNewContract()
-	end
-else
-	DayIndex.Value = DayIndex.Value == 0 and 0 or DayIndex.Value
+	if ActiveContractId.Value == "" then rollNewContract() end
 end
 
-ensureNpcPrompt(lastIsDay)
-resetAllPages()
-
-for _, player in ipairs(Players:GetPlayers()) do
-	registerDeathTracking(player)
-end
-
-if not lastIsDay then
+ensureNpcPrompt(lastIsDayRef.value)
+for _, player in ipairs(Players:GetPlayers()) do registerDeathTracking(player) end
+if not lastIsDayRef.value then
 	local contract = getContractById(ActiveContractId.Value)
-	if contract then
-		startNightlyQuest(contract)
-	end
+	if contract then startNightlyQuest(contract) end
 end
 
 task.spawn(function()
 	while true do
-		local minutes = Lighting:GetMinutesAfterMidnight()
-		local isDay = isDaytime(minutes)
-
-		if isDay ~= lastIsDay then
+		local isDay = isDaytime(Lighting:GetMinutesAfterMidnight())
+		if isDay ~= lastIsDayRef.value then
 			if isDay then
 				DayIndex.Value += 1
 				rollNewContract()
 				updatePromptStyle(true)
 				payoutNightRewards()
-				stopNightlyQuest()
+				stopNightlyQuest(true)
 			else
 				local contract = getContractById(ActiveContractId.Value)
-				if contract then
-					startNightlyQuest(contract)
-				end
+				if contract then startNightlyQuest(contract) end
 				updatePromptStyle(false)
 			end
-			lastIsDay = isDay
+			lastIsDayRef.value = isDay
 		end
-
 		if not isDay and questState.activeContract then
 			updateDistanceTracking()
 		end
-
 		task.wait(1)
 	end
 end)
@@ -13970,7 +14215,8 @@ Players.PlayerRemoving:Connect(function(player)
 		connection:Disconnect()
 		questState.playerDeathConnections[player] = nil
 	end
-end)]]></ProtectedString>
+end)
+]]></ProtectedString>
 			<bool name="Disabled">false</bool>
 			<Content name="LinkedSource"><null></null></Content>
 			<token name="RunContext">0</token>
