@@ -16111,6 +16111,20 @@ local function findFirstByNames(root, names)
 	return nil
 end
 
+local function cloneChildrenSafely(sourceFolder, targetFolder)
+	for _, child in ipairs(sourceFolder:GetChildren()) do
+		local wasArchivable = child.Archivable
+		child.Archivable = true
+		local ok, clone = pcall(function()
+			return child:Clone()
+		end)
+		child.Archivable = wasArchivable
+		if ok and clone then
+			clone.Parent = targetFolder
+		end
+	end
+end
+
 local function getSortedWaypoints(folder, prefix)
 	local points = {}
 	for _, child in ipairs(folder:GetChildren()) do
@@ -16297,13 +16311,15 @@ questHandlers.CapturePoint = {
 		end
 
 		local runtimeRoot = ensureQuestRuntimeFolder()
-		local runtimeCaptureFolder = captureFolder:Clone()
+		local runtimeCaptureFolder = Instance.new("Folder")
 		runtimeCaptureFolder.Name = settings.CapturePointFolderName
 		runtimeCaptureFolder.Parent = runtimeRoot
+		cloneChildrenSafely(captureFolder, runtimeCaptureFolder)
 
-		local runtimeWaypointFolder = waypointFolder:Clone()
+		local runtimeWaypointFolder = Instance.new("Folder")
 		runtimeWaypointFolder.Name = settings.WaypointFolderName
 		runtimeWaypointFolder.Parent = runtimeRoot
+		cloneChildrenSafely(waypointFolder, runtimeWaypointFolder)
 
 		local model = findFirstByNames(runtimeCaptureFolder, settings.CaptureModelNames)
 		if not (model and model:IsA("Model")) then
