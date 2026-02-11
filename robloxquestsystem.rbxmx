@@ -10909,6 +10909,7 @@ local QuestContractsConfig = require(Config.QuestContractsConfig)
 
 local RequestContractUI = Remotes:WaitForChild("RequestContractUI")
 local ActiveContractId = State:WaitForChild("ActiveContractId")
+local ActiveContractRarity = State:FindFirstChild("ActiveContractRarity")
 
 local npc = script.Parent
 local prompt = npc:WaitForChild("ProximityPrompt")
@@ -10938,7 +10939,8 @@ prompt.Triggered:Connect(function(player)
 
 	local introLines = dialogData.Intro
 	local contract = isDay and getActiveContract()
-	if contract and contract.Rarity == "Legendary" then
+	local activeRarity = ActiveContractRarity and ActiveContractRarity.Value or (contract and contract.Rarity)
+	if contract and activeRarity == "Legendary" then
 		local flair = DialogueConfig.RarityFlair and DialogueConfig.RarityFlair.Legendary
 		if flair and #flair > 0 then
 			introLines = flair
@@ -13231,7 +13233,21 @@ return ShopConfig]]></ProtectedString>
 				<Properties>
 					<Content name="LinkedSource"><null></null></Content>
 					<ProtectedString name="Source"><![CDATA[local RarityConfig = {
-	RarityOrder = {"Common", "Epic", "Legendary"},
+	RarityOrder = {"Common", "Uncommon", "Rare", "Epic", "Legendary"},
+	RarityRollWeights = {
+		Common = 1,
+		Uncommon = 1,
+		Rare = 1,
+		Epic = 1,
+		Legendary = 1,
+	},
+	RarityPackages = {
+		Common = { Objective = 0.85, Decay = 0.75, Chaos = 0.75, Reward = 1.00 },
+		Uncommon = { Objective = 1.00, Decay = 1.00, Chaos = 1.00, Reward = 1.25 },
+		Rare = { Objective = 1.15, Decay = 1.20, Chaos = 1.20, Reward = 1.55 },
+		Epic = { Objective = 1.30, Decay = 1.50, Chaos = 1.50, Reward = 2.00 },
+		Legendary = { Objective = 1.45, Decay = 1.70, Chaos = 1.70, Reward = 2.60 },
+	},
 	Rarities = {
 		Common = {
 			DisplayName = "Common",
@@ -13244,9 +13260,31 @@ return ShopConfig]]></ProtectedString>
 			},
 			Effects = { GradientDrift = false, Pulse = false, Shimmer = false },
 		},
+		Uncommon = {
+			DisplayName = "Uncommon",
+			DefaultThreat = 35,
+			Theme = {
+				Accent = Color3.fromRGB(108, 211, 132),
+				BgTop = Color3.fromRGB(18, 34, 20),
+				BgBottom = Color3.fromRGB(9, 18, 10),
+				Stroke = Color3.fromRGB(78, 155, 96),
+			},
+			Effects = { GradientDrift = true, Pulse = false, Shimmer = false },
+		},
+		Rare = {
+			DisplayName = "Rare",
+			DefaultThreat = 50,
+			Theme = {
+				Accent = Color3.fromRGB(108, 166, 255),
+				BgTop = Color3.fromRGB(16, 24, 40),
+				BgBottom = Color3.fromRGB(8, 12, 22),
+				Stroke = Color3.fromRGB(84, 124, 186),
+			},
+			Effects = { GradientDrift = true, Pulse = true, Shimmer = false },
+		},
 		Epic = {
 			DisplayName = "Epic",
-			DefaultThreat = 55,
+			DefaultThreat = 65,
 			Theme = {
 				Accent = Color3.fromRGB(162, 92, 255),
 				BgTop = Color3.fromRGB(34, 18, 52),
@@ -13280,7 +13318,8 @@ function RarityConfig.getThreatTier(threat)
 	return "LOW"
 end
 
-return RarityConfig]]></ProtectedString>
+return RarityConfig
+]]></ProtectedString>
 					<string name="ScriptGuid">{e3314035-e0b8-49cc-99a6-acb3599eabdf}</string>
 					<BinaryString name="AttributesSerialize"></BinaryString>
 					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
@@ -13391,11 +13430,11 @@ return RarityConfig]]></ProtectedString>
 	{
 		Id = "daily_pages",
 		Name = "Lost Pages",
-		Rarity = "Common",
-		Threat = 15,
+		Rarity = "Uncommon",
+		Threat = 35,
 		Description = "Scattered notes keep the spirits restless. Gather them before night deepens.",
 		Objectives = {
-			"Collect 8 cursed pages",
+			"Collect cursed pages before dawn",
 			"Work together - progress is shared",
 		},
 		Type = "SharedCollectCount",
@@ -13405,21 +13444,22 @@ return RarityConfig]]></ProtectedString>
 		},
 	},
 	{
-		Id = "butterfly_crate",
-		Name = "Butterfly Crate",
-		Rarity = "Legendary",
-		Description = "Retrieve the marked crate and deliver it to the warded drop zone.",
+		Id = "daily_capture",
+		Name = "Moving Capture Point",
+		Rarity = "Uncommon",
+		Threat = 45,
+		Description = "Hold the moving circle and build capture progress before dawn.",
 		Objectives = {
-			"Locate the butterfly crate",
-			"Deliver it to the drop marker",
+			"Stay inside the moving capture ring",
+			"Progress decays when no one is inside",
 		},
-		Type = "DeliverItem",
+		Type = "CapturePoint",
 		Settings = {
-			CrateTag = "QuestPickup_Crate",
-			DropTag = "QuestDrop_Crate",
+			RequiredProgressBase = 240,
 		},
-		},
-	}]]></ProtectedString>
+	},
+}
+]]></ProtectedString>
 					<string name="ScriptGuid">{2d5db30d-9156-49b3-813c-4c0d087788d3}</string>
 					<BinaryString name="AttributesSerialize"></BinaryString>
 					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
@@ -13433,18 +13473,59 @@ return RarityConfig]]></ProtectedString>
 				<Properties>
 					<Content name="LinkedSource"><null></null></Content>
 					<ProtectedString name="Source"><![CDATA[return {
-	ForceContract = true,
+	ForceContract = false,
 	ForcedContractId = "daily_pages",
+	DailyContractPool = {"daily_pages", "daily_capture"},
 	Pages = {
 		FolderName = "QuestSpawns",
 		PagesFolderName = "Pages",
 		PagesToSpawn = 8,
 		PickupTag = "QuestPickup_Page",
+		ByRarityCount = {
+			Common = 6,
+			Uncommon = 8,
+			Rare = 10,
+			Epic = 12,
+			Legendary = 14,
+		},
+	},
+	Capture = {
+		RootFolderName = "CaptureQuest",
+		CapturePointFolderName = "CapturePoint",
+		CaptureModelNames = {"CapCircle", "CapCircleModel"},
+		BasePartName = "Base",
+		RadiusPartNames = {"circle3", "Circle3"},
+		WaypointFolderName = "PartWaypoints",
+		WaypointNamePattern = "part",
+		BaseMoveSpeed = 5,
+		BurstMultiplier = 2.0,
+		BurstCheckInterval = 20,
+		BurstChance = 0.50,
+		BurstDurationMin = 5,
+		BurstDurationMax = 15,
+		WaypointPause = 3,
+		ReverseChance = 0.10,
+		RequiredProgressBase = 240,
+		CaptureGainPerSecond = 1,
+		DecayPercentBase = 0.50,
+		DecayPercentCap = 0.95,
+		RotationSpeedBase = 22,
+		RotationSpeedBurstMultiplier = 2.0,
+		SpeedTransitionRate = 2.5,
+		CaptureCheckInterval = 0.2,
+		SoundIds = {
+			Burst = "rbxassetid://122534507946416",
+			Reverse = "rbxassetid://134113957270216",
+			Success = "rbxassetid://135134898038127",
+			Fail = "rbxassetid://140251382260617",
+		},
+		LongRangeRollOffMaxDistance = 2000,
 	},
 	SummaryUI = {
 		AutoCloseSeconds = 10,
 	},
-}]]></ProtectedString>
+}
+]]></ProtectedString>
 					<string name="ScriptGuid">{7c1fe18f-5c3e-4ff8-acde-9f2ca67b7a14}</string>
 					<BinaryString name="AttributesSerialize"></BinaryString>
 					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
@@ -13466,17 +13547,13 @@ return RarityConfig]]></ProtectedString>
 		CompletionBonus = 160,
 		DistancePerStud = 0.02,
 	},
-	MultipliersByRarity = {
-		Common = 1,
-		Epic = 1.2,
-		Legendary = 1.5,
-	},
 	Distance = {
 		MinSpeedToCount = 8,
 		SoftCapDistance = 900,
 		PostCapMultiplier = 0.25,
 	},
-}]]></ProtectedString>
+}
+]]></ProtectedString>
 					<string name="ScriptGuid">{ac2f104d-024d-4d9c-98c5-a53117c8984f}</string>
 					<BinaryString name="AttributesSerialize"></BinaryString>
 					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
@@ -15426,6 +15503,8 @@ end)
 local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
 local CollectionService = game:GetService("CollectionService")
+local RunService = game:GetService("RunService")
+local Debris = game:GetService("Debris")
 
 local QuestSystem = ReplicatedStorage:WaitForChild("QuestSystem")
 local Config = QuestSystem:WaitForChild("Config")
@@ -15446,6 +15525,13 @@ local ShowNightSummary = Remotes:WaitForChild("ShowNightSummary")
 
 local ActiveContractId = State:WaitForChild("ActiveContractId")
 local DayIndex = State:WaitForChild("DayIndex")
+local ActiveContractRarity = State:FindFirstChild("ActiveContractRarity")
+if not ActiveContractRarity then
+	ActiveContractRarity = Instance.new("StringValue")
+	ActiveContractRarity.Name = "ActiveContractRarity"
+	ActiveContractRarity.Value = "Uncommon"
+	ActiveContractRarity.Parent = State
+end
 
 local function isDaytime(minutes)
 	return minutes >= TimeConfig.DayStartMinutes and minutes < TimeConfig.DayEndMinutes
@@ -15460,25 +15546,68 @@ local function getContractById(contractId)
 	return nil
 end
 
+local function getRarityPackage(rarity)
+	local packages = RarityConfig.RarityPackages or {}
+	return packages[rarity] or packages.Uncommon or { Objective = 1, Decay = 1, Chaos = 1, Reward = 1 }
+end
+
+local function rollRarity()
+	local order = RarityConfig.RarityOrder or {"Common", "Uncommon", "Rare", "Epic", "Legendary"}
+	local weights = RarityConfig.RarityRollWeights
+	if not weights then
+		return order[math.random(1, #order)]
+	end
+
+	local totalWeight = 0
+	for _, rarity in ipairs(order) do
+		totalWeight += math.max(0, weights[rarity] or 0)
+	end
+	if totalWeight <= 0 then
+		return order[math.random(1, #order)]
+	end
+
+	local roll = math.random() * totalWeight
+	local running = 0
+	for _, rarity in ipairs(order) do
+		running += math.max(0, weights[rarity] or 0)
+		if roll <= running then
+			return rarity
+		end
+	end
+	return order[#order]
+end
+
 local function chooseDailyContract()
 	if QuestSettings.ForceContract then
 		local forced = getContractById(QuestSettings.ForcedContractId)
-		if not forced then
-			warn("QuestService: Forced contract id not found:", QuestSettings.ForcedContractId)
-		else
+		if forced then
 			return forced
 		end
+		warn("QuestService: Forced contract id not found:", QuestSettings.ForcedContractId)
 	end
-	if #QuestContractsConfig == 0 then
+
+	local pool = QuestSettings.DailyContractPool or {}
+	local valid = {}
+	for _, contractId in ipairs(pool) do
+		local contract = getContractById(contractId)
+		if contract then
+			table.insert(valid, contract)
+		end
+	end
+
+	if #valid == 0 then
+		valid = QuestContractsConfig
+	end
+	if #valid == 0 then
 		warn("QuestContractsConfig has no contracts configured.")
 		return nil
 	end
-	local index = math.random(1, #QuestContractsConfig)
-	return QuestContractsConfig[index]
+	return valid[math.random(1, #valid)]
 end
 
 local questState = {
 	activeContract = nil,
+	activeRarity = "Uncommon",
 	progress = 0,
 	target = 0,
 	completed = false,
@@ -15489,6 +15618,7 @@ local questState = {
 	playerDied = {},
 	playerDeathConnections = {},
 	activePages = {},
+	captureRuntime = nil,
 }
 
 local function clearQuestConnections()
@@ -15674,7 +15804,7 @@ local function resetAllPages()
 	questState.activePages = {}
 end
 
-local function selectRandomPages()
+local function selectRandomPages(count)
 	local folder = getQuestPagesFolder()
 	if not folder then
 		return {}
@@ -15689,20 +15819,19 @@ local function selectRandomPages()
 		local j = math.random(1, i)
 		pages[i], pages[j] = pages[j], pages[i]
 	end
-	local count = math.min(QuestSettings.Pages.PagesToSpawn or 8, #pages)
 	local selection = {}
-	for i = 1, count do
+	for i = 1, math.min(count, #pages) do
 		table.insert(selection, pages[i])
 	end
 	return selection
 end
 
-local function activatePageQuest()
+local function activatePageQuest(targetCount)
 	resetAllPages()
 	if isDaytime(Lighting:GetMinutesAfterMidnight()) then
 		return
 	end
-	local selection = selectRandomPages()
+	local selection = selectRandomPages(targetCount)
 	for _, page in ipairs(selection) do
 		setPageActive(page, true)
 		applyQuestPickupTag(page)
@@ -15821,11 +15950,98 @@ local function updatePromptStyle(isDay)
 	end
 end
 
+local function playWorldSound(position, soundId)
+	local part = Instance.new("Part")
+	part.Name = "QuestWorldSoundAnchor"
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.Transparency = 1
+	part.Size = Vector3.new(1, 1, 1)
+	part.CFrame = CFrame.new(position)
+	part.Parent = workspace
+
+	local sound = Instance.new("Sound")
+	sound.SoundId = soundId
+	sound.Volume = 1
+	sound.RollOffMode = Enum.RollOffMode.Inverse
+	sound.RollOffMinDistance = 25
+	sound.RollOffMaxDistance = QuestSettings.Capture.LongRangeRollOffMaxDistance or 2000
+	sound.Parent = part
+	sound:Play()
+
+	Debris:AddItem(part, 8)
+end
+
+local function cleanupCaptureRuntime(result)
+	local runtime = questState.captureRuntime
+	if not runtime then
+		return
+	end
+
+	if runtime.burstSound and runtime.burstSound.IsPlaying then
+		runtime.burstSound:Stop()
+	end
+
+	if runtime.model and runtime.model.Parent then
+		local pos = runtime.base and runtime.base.Position or runtime.model:GetPivot().Position
+		if result == "success" then
+			playWorldSound(pos, QuestSettings.Capture.SoundIds.Success)
+		elseif result == "fail" then
+			playWorldSound(pos, QuestSettings.Capture.SoundIds.Fail)
+		end
+		runtime.model:Destroy()
+	end
+
+	if runtime.loopConnection then
+		runtime.loopConnection:Disconnect()
+		runtime.loopConnection = nil
+	end
+
+	questState.captureRuntime = nil
+end
+
+local function findFirstByNames(root, names)
+	for _, name in ipairs(names) do
+		local exact = root:FindFirstChild(name, true)
+		if exact then
+			return exact
+		end
+	end
+	return nil
+end
+
+local function getSortedWaypoints(folder, prefix)
+	local points = {}
+	for _, child in ipairs(folder:GetChildren()) do
+		if child:IsA("BasePart") then
+			local suffix = child.Name:match("(%d+)$")
+			if suffix and child.Name:lower():find(prefix:lower(), 1, true) == 1 then
+				table.insert(points, { index = tonumber(suffix), part = child })
+			end
+		end
+	end
+	table.sort(points, function(a, b)
+		return a.index < b.index
+	end)
+	local ordered = {}
+	for _, entry in ipairs(points) do
+		table.insert(ordered, entry.part)
+	end
+	return ordered
+end
+
 local questHandlers = {}
 
 questHandlers.SharedCollectCount = {
 	start = function(contract)
-		questState.target = contract.Settings.Count or 1
+		local package = getRarityPackage(questState.activeRarity)
+		local objectiveMultiplier = package.Objective or 1
+		local baseCount = contract.Settings.Count or QuestSettings.Pages.PagesToSpawn or 8
+		local computed = math.floor((baseCount * objectiveMultiplier) + 0.5)
+		local rarityCount = QuestSettings.Pages.ByRarityCount and QuestSettings.Pages.ByRarityCount[questState.activeRarity]
+		questState.target = rarityCount or computed
 		questState.progress = 0
 		questState.completed = false
 		local pickupTag = contract.Settings.PickupTag
@@ -15872,9 +16088,11 @@ questHandlers.SharedCollectCount = {
 
 		local added = CollectionService:GetInstanceAddedSignal(pickupTag):Connect(connectInstance)
 		table.insert(questState.connections, added)
+		activatePageQuest(questState.target)
 	end,
 	stop = function()
 		clearQuestConnections()
+		deactivatePageQuest()
 	end,
 }
 
@@ -15899,21 +16117,18 @@ questHandlers.DeliverItem = {
 			if not part then
 				return
 			end
-
 			local prompt = crate:FindFirstChildOfClass("ProximityPrompt")
 			if prompt then
-				local connection = prompt.Triggered:Connect(function(player)
+				table.insert(questState.connections, prompt.Triggered:Connect(function(player)
 					markPicked(crate, player)
-				end)
-				table.insert(questState.connections, connection)
+				end))
 			else
-				local connection = part.Touched:Connect(function(hit)
+				table.insert(questState.connections, part.Touched:Connect(function(hit)
 					local player = getPlayerFromHit(hit)
 					if player then
 						markPicked(crate, player)
 					end
-				end)
-				table.insert(questState.connections, connection)
+				end))
 			end
 		end
 
@@ -15933,14 +16148,13 @@ questHandlers.DeliverItem = {
 			if not part then
 				return
 			end
-			local connection = part.Touched:Connect(function(hit)
+			table.insert(questState.connections, part.Touched:Connect(function(hit)
 				local crate = getCrateFromHit(hit)
 				if crate and crate:GetAttribute("QuestCarrierUserId") then
 					questState.completed = true
 					questState.progress = 1
 				end
-			end)
-			table.insert(questState.connections, connection)
+			end))
 		end
 
 		for _, crate in ipairs(CollectionService:GetTagged(crateTag)) do
@@ -15958,12 +16172,240 @@ questHandlers.DeliverItem = {
 	end,
 }
 
+questHandlers.CapturePoint = {
+	start = function(contract)
+		questState.completed = false
+		questState.progress = 0
+		local package = getRarityPackage(questState.activeRarity)
+		local settings = QuestSettings.Capture
+		local objectiveMultiplier = package.Objective or 1
+		local chaosMultiplier = package.Chaos or 1
+		local decayMultiplier = package.Decay or 1
+
+		questState.target = math.floor(((contract.Settings.RequiredProgressBase or settings.RequiredProgressBase) * objectiveMultiplier) + 0.5)
+
+		cleanupCaptureRuntime()
+
+		local rootFolder = workspace:FindFirstChild(settings.RootFolderName)
+		local captureFolder = rootFolder and rootFolder:FindFirstChild(settings.CapturePointFolderName)
+		local waypointFolder = rootFolder and rootFolder:FindFirstChild(settings.WaypointFolderName)
+		if not (captureFolder and waypointFolder) then
+			warn("QuestService: Capture quest folders missing.")
+			return
+		end
+
+		local template = findFirstByNames(captureFolder, settings.CaptureModelNames)
+		if not (template and template:IsA("Model")) then
+			warn("QuestService: Capture model not found.")
+			return
+		end
+
+		local waypoints = getSortedWaypoints(waypointFolder, settings.WaypointNamePattern)
+		if #waypoints < 2 then
+			warn("QuestService: Capture waypoints require at least 2 parts.")
+			return
+		end
+
+		local model = template:Clone()
+		model.Name = "ActiveCapturePoint"
+		for _, d in ipairs(model:GetDescendants()) do
+			if d:IsA("Script") or d:IsA("LocalScript") then
+				d:Destroy()
+			end
+		end
+		model.Parent = workspace
+
+		local base = model:FindFirstChild(settings.BasePartName, true)
+		local radiusPart = findFirstByNames(model, settings.RadiusPartNames)
+		if not (base and base:IsA("BasePart") and radiusPart and radiusPart:IsA("BasePart")) then
+			warn("QuestService: Capture model missing Base/circle3 parts.")
+			model:Destroy()
+			return
+		end
+
+		local startIndex = math.random(1, #waypoints)
+		model:PivotTo(CFrame.new(waypoints[startIndex].Position))
+
+		local function wrapIndex(index)
+			if index > #waypoints then
+				return 1
+			elseif index < 1 then
+				return #waypoints
+			end
+			return index
+		end
+
+		local radius = math.max(radiusPart.Size.X, radiusPart.Size.Z) * 0.5
+		local runtime = {
+			model = model,
+			base = base,
+			radius = radius,
+			waypoints = waypoints,
+			currentIndex = startIndex,
+			targetIndex = wrapIndex(startIndex + 1),
+			direction = 1,
+			currentSpeed = settings.BaseMoveSpeed,
+			targetSpeed = settings.BaseMoveSpeed,
+			pauseUntil = 0,
+			nextBurstCheck = os.clock() + settings.BurstCheckInterval,
+			burstActive = false,
+			burstEndsAt = 0,
+			yaw = 0,
+			progressAccumulator = 0,
+			burstSound = nil,
+		}
+		questState.captureRuntime = runtime
+
+		local function playOneShot(soundId)
+			local s = Instance.new("Sound")
+			s.SoundId = soundId
+			s.Volume = 1
+			s.RollOffMode = Enum.RollOffMode.Inverse
+			s.RollOffMinDistance = 25
+			s.RollOffMaxDistance = 200
+			s.Parent = base
+			s:Play()
+			Debris:AddItem(s, 6)
+		end
+
+		local function applyCaptureProgress(dt)
+			runtime.progressAccumulator += dt
+			local checkInterval = settings.CaptureCheckInterval or 0.2
+			if runtime.progressAccumulator < checkInterval then
+				return
+			end
+			local stepDt = runtime.progressAccumulator
+			runtime.progressAccumulator = 0
+
+			local inside = false
+			for _, player in ipairs(Players:GetPlayers()) do
+				local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+				if root and (root.Position - base.Position).Magnitude <= runtime.radius then
+					inside = true
+					break
+				end
+			end
+
+			local gainRate = settings.CaptureGainPerSecond
+			local decayPercentScaled = math.clamp(settings.DecayPercentBase * decayMultiplier, 0, settings.DecayPercentCap or 0.95)
+			if inside then
+				questState.progress += gainRate * stepDt
+			else
+				questState.progress -= gainRate * decayPercentScaled * stepDt
+			end
+			questState.progress = math.clamp(questState.progress, 0, questState.target)
+
+			if questState.progress >= questState.target then
+				questState.completed = true
+				cleanupCaptureRuntime("success")
+			end
+		end
+
+		runtime.loopConnection = RunService.Heartbeat:Connect(function(dt)
+			if questState.captureRuntime ~= runtime then
+				return
+			end
+			if questState.completed then
+				return
+			end
+
+			local now = os.clock()
+			if now >= runtime.nextBurstCheck then
+				runtime.nextBurstCheck = now + settings.BurstCheckInterval
+				local chance = math.clamp(settings.BurstChance * chaosMultiplier, 0, 1)
+				if math.random() < chance then
+					runtime.burstActive = true
+					runtime.burstEndsAt = now + math.random() * (settings.BurstDurationMax - settings.BurstDurationMin) + settings.BurstDurationMin
+					runtime.targetSpeed = settings.BaseMoveSpeed * settings.BurstMultiplier
+					if runtime.burstSound and runtime.burstSound.IsPlaying then
+						runtime.burstSound:Stop()
+					end
+					runtime.burstSound = Instance.new("Sound")
+					runtime.burstSound.SoundId = settings.SoundIds.Burst
+					runtime.burstSound.Volume = 1
+					runtime.burstSound.RollOffMode = Enum.RollOffMode.Inverse
+					runtime.burstSound.RollOffMinDistance = 20
+					runtime.burstSound.RollOffMaxDistance = 160
+					runtime.burstSound.Parent = base
+					runtime.burstSound:Play()
+					Debris:AddItem(runtime.burstSound, 8)
+				end
+			end
+
+			if runtime.burstActive and now >= runtime.burstEndsAt then
+				runtime.burstActive = false
+				runtime.targetSpeed = settings.BaseMoveSpeed
+			end
+
+			local deltaSpeed = runtime.targetSpeed - runtime.currentSpeed
+			if math.abs(deltaSpeed) > 0.01 then
+				local step = math.min(math.abs(deltaSpeed), (settings.SpeedTransitionRate or 2.5) * dt)
+				runtime.currentSpeed += step * (deltaSpeed > 0 and 1 or -1)
+			else
+				runtime.currentSpeed = runtime.targetSpeed
+			end
+
+			local transitioning = math.abs(runtime.currentSpeed - settings.BaseMoveSpeed) > 0.05 or math.abs(runtime.currentSpeed - runtime.targetSpeed) > 0.05
+			local isPaused = now < runtime.pauseUntil
+
+			if not isPaused then
+				local targetPart = runtime.waypoints[runtime.targetIndex]
+				local currentPos = runtime.model:GetPivot().Position
+				local toTarget = targetPart.Position - currentPos
+				local distance = toTarget.Magnitude
+				local travel = runtime.currentSpeed * dt
+				local nextPos = currentPos
+
+				if distance <= travel then
+					nextPos = targetPart.Position
+					runtime.currentIndex = runtime.targetIndex
+
+					local reverseChance = math.clamp(settings.ReverseChance * chaosMultiplier, 0, 1)
+					if math.random() < reverseChance then
+						runtime.direction *= -1
+						playOneShot(settings.SoundIds.Reverse)
+					end
+
+					if (not runtime.burstActive) and (not transitioning) then
+						runtime.pauseUntil = now + settings.WaypointPause
+					end
+					runtime.targetIndex = wrapIndex(runtime.currentIndex + runtime.direction)
+				elseif distance > 0 then
+					nextPos = currentPos + (toTarget.Unit * travel)
+				end
+
+				local rotationMultiplier = runtime.currentSpeed / settings.BaseMoveSpeed
+				local rotationSpeed = settings.RotationSpeedBase * math.max(1, rotationMultiplier)
+				runtime.yaw += math.rad(rotationSpeed) * dt
+				runtime.model:PivotTo(CFrame.new(nextPos) * CFrame.Angles(0, runtime.yaw, 0))
+			end
+
+			applyCaptureProgress(dt)
+		end)
+	end,
+	stop = function(failed)
+		clearQuestConnections()
+		if failed and (not questState.completed) then
+			cleanupCaptureRuntime("fail")
+		else
+			cleanupCaptureRuntime()
+		end
+	end,
+}
+
 local function startNightlyQuest(contract)
 	clearQuestConnections()
+	cleanupCaptureRuntime()
+	deactivatePageQuest()
+
 	questState.activeContract = contract
+	questState.activeRarity = ActiveContractRarity.Value ~= "" and ActiveContractRarity.Value or "Uncommon"
 	questState.startTime = os.time()
 	questState.playerDistances = {}
 	questState.playerLastPositions = {}
+	questState.progress = 0
+	questState.target = 0
+	questState.completed = false
 	for _, player in ipairs(Players:GetPlayers()) do
 		questState.playerDied[player] = false
 	end
@@ -15974,10 +16416,6 @@ local function startNightlyQuest(contract)
 	else
 		warn("QuestService: No handler for quest type:", contract.Type)
 	end
-
-	if contract.Id == QuestSettings.ForcedContractId or (contract.Settings and contract.Settings.PickupTag == QuestSettings.Pages.PickupTag) then
-		activatePageQuest()
-	end
 end
 
 local function stopNightlyQuest()
@@ -15985,9 +16423,10 @@ local function stopNightlyQuest()
 	if contract then
 		local handler = questHandlers[contract.Type]
 		if handler and handler.stop then
-			handler.stop()
+			handler.stop(not questState.completed)
 		end
 	end
+	cleanupCaptureRuntime()
 	deactivatePageQuest()
 	questState.activeContract = nil
 	questState.completed = false
@@ -16017,7 +16456,7 @@ local function calculateXP(distance, survived, completed)
 		total += xpConfig.CompletionBonus or 0
 	end
 	total += distance * (xpConfig.DistancePerStud or 0)
-	return math.floor(total)
+	return total
 end
 
 local function awardCash(player, amount)
@@ -16061,7 +16500,7 @@ local function payoutNightRewards()
 	if not contract then
 		return
 	end
-	local rarityMultiplier = RewardsConfig.MultipliersByRarity[contract.Rarity] or 1
+	local rewardMultiplier = getRarityPackage(questState.activeRarity).Reward or 1
 
 	for _, player in ipairs(Players:GetPlayers()) do
 		local distance = questState.playerDistances[player] or 0
@@ -16069,9 +16508,9 @@ local function payoutNightRewards()
 		local survivalCash = RewardsConfig.SurvivalCashBase
 		local completionCash = questState.completed and RewardsConfig.QuestCompleteCash or 0
 		local distanceCash = calculateDistanceCash(distance)
-		local totalCash = (survivalCash + completionCash + distanceCash) * rarityMultiplier
-		local xpAward = calculateXP(distance, survived, questState.completed)
-		local winsAward = survived and 1 or 0
+		local totalCash = (survivalCash + completionCash + distanceCash) * rewardMultiplier
+		local xpAward = calculateXP(distance, survived, questState.completed) * rewardMultiplier
+		local winsAward = survived and math.max(1, math.floor(rewardMultiplier + 0.5)) or 0
 
 		awardCash(player, totalCash)
 		if winsAward > 0 then
@@ -16086,7 +16525,7 @@ local function payoutNightRewards()
 			QuestCompleted = questState.completed,
 			Distance = distance,
 			CashAwarded = totalCash,
-			XPAwarded = xpAward,
+			XPAwarded = math.floor(xpAward),
 			WinsAwarded = winsAward,
 		})
 	end
@@ -16102,8 +16541,7 @@ local function updateDistanceTracking()
 			if last then
 				local delta = (root.Position - last)
 				local distance = delta.Magnitude
-				local speed = distance
-				if speed >= cfg.MinSpeedToCount then
+				if distance >= cfg.MinSpeedToCount then
 					questState.playerDistances[player] = (questState.playerDistances[player] or 0) + distance
 				end
 			end
@@ -16118,16 +16556,26 @@ local function getResolvedContractData(player)
 		return nil
 	end
 
-	local rarityData = RarityConfig.Rarities[contract.Rarity]
+	local activeRarity = ActiveContractRarity.Value ~= "" and ActiveContractRarity.Value or "Uncommon"
+	local rarityData = RarityConfig.Rarities[activeRarity]
 	local threat = contract.Threat or (rarityData and rarityData.DefaultThreat) or 0
 	local accepted = player:GetAttribute("AcceptedContractId") == contract.Id and player:GetAttribute("AcceptedContractDay") == DayIndex.Value
+	local objectiveMultiplier = getRarityPackage(activeRarity).Objective or 1
+	local objectives = table.clone(contract.Objectives or {})
+	if contract.Type == "SharedCollectCount" then
+		local count = QuestSettings.Pages.ByRarityCount[activeRarity] or math.floor(((contract.Settings.Count or 8) * objectiveMultiplier) + 0.5)
+		objectives[1] = string.format("Collect %d cursed pages", count)
+	elseif contract.Type == "CapturePoint" then
+		local required = math.floor(((QuestSettings.Capture.RequiredProgressBase or 240) * objectiveMultiplier) + 0.5)
+		objectives[1] = string.format("Hold the moving circle for %d progress", required)
+	end
 
 	return {
 		Id = contract.Id,
 		Name = contract.Name,
 		Description = contract.Description,
-		Objectives = contract.Objectives,
-		Rarity = contract.Rarity,
+		Objectives = objectives,
+		Rarity = activeRarity,
 		Threat = threat,
 		DayIndex = DayIndex.Value,
 		Accepted = accepted,
@@ -16135,17 +16583,16 @@ local function getResolvedContractData(player)
 			Survival = RewardsConfig.SurvivalCashBase,
 			Completion = RewardsConfig.QuestCompleteCash,
 			Distance = RewardsConfig.DistanceCashPerStud,
+			RarityMultiplier = getRarityPackage(activeRarity).Reward,
 		},
-	FlavorLine = DialogueConfig.BoardFlavor,
+		FlavorLine = DialogueConfig.BoardFlavor,
 	}
 end
 
 RequestContractUI.OnServerEvent:Connect(function(player)
-	local minutes = Lighting:GetMinutesAfterMidnight()
-	if not isDaytime(minutes) then
+	if not isDaytime(Lighting:GetMinutesAfterMidnight()) then
 		return
 	end
-
 	local data = getResolvedContractData(player)
 	if data then
 		ShowContractUI:FireClient(player, data)
@@ -16156,12 +16603,9 @@ AcceptContract.OnServerEvent:Connect(function(player, contractId)
 	if contractId ~= ActiveContractId.Value then
 		return
 	end
-
-	local minutes = Lighting:GetMinutesAfterMidnight()
-	if not isDaytime(minutes) then
+	if not isDaytime(Lighting:GetMinutesAfterMidnight()) then
 		return
 	end
-
 	player:SetAttribute("AcceptedContractId", contractId)
 	player:SetAttribute("AcceptedContractDay", DayIndex.Value)
 end)
@@ -16170,28 +16614,31 @@ local function rollNewContract()
 	local contract = chooseDailyContract()
 	if contract then
 		ActiveContractId.Value = contract.Id
+		ActiveContractRarity.Value = rollRarity()
 	end
 end
 
-local lastIsDay = isDaytime(Lighting:GetMinutesAfterMidnight())
+local lastIsDayRef = { value = isDaytime(Lighting:GetMinutesAfterMidnight()) }
 
-if lastIsDay then
+if lastIsDayRef.value then
 	DayIndex.Value = math.max(DayIndex.Value, 1)
 	if ActiveContractId.Value == "" then
 		rollNewContract()
+	elseif ActiveContractRarity.Value == "" then
+		ActiveContractRarity.Value = rollRarity()
 	end
 else
 	DayIndex.Value = DayIndex.Value == 0 and 0 or DayIndex.Value
 end
 
-ensureNpcPrompt(lastIsDay)
+ensureNpcPrompt(lastIsDayRef.value)
 resetAllPages()
 
 for _, player in ipairs(Players:GetPlayers()) do
 	registerDeathTracking(player)
 end
 
-if not lastIsDay then
+if not lastIsDayRef.value then
 	local contract = getContractById(ActiveContractId.Value)
 	if contract then
 		startNightlyQuest(contract)
@@ -16200,10 +16647,8 @@ end
 
 task.spawn(function()
 	while true do
-		local minutes = Lighting:GetMinutesAfterMidnight()
-		local isDay = isDaytime(minutes)
-
-		if isDay ~= lastIsDay then
+		local isDay = isDaytime(Lighting:GetMinutesAfterMidnight())
+		if isDay ~= lastIsDayRef.value then
 			if isDay then
 				DayIndex.Value += 1
 				rollNewContract()
@@ -16217,13 +16662,12 @@ task.spawn(function()
 				end
 				updatePromptStyle(false)
 			end
-			lastIsDay = isDay
+			lastIsDayRef.value = isDay
 		end
 
 		if not isDay and questState.activeContract then
 			updateDistanceTracking()
 		end
-
 		task.wait(1)
 	end
 end)
@@ -16244,7 +16688,8 @@ Players.PlayerRemoving:Connect(function(player)
 		connection:Disconnect()
 		questState.playerDeathConnections[player] = nil
 	end
-end)]]></ProtectedString>
+end)
+]]></ProtectedString>
 			<bool name="Disabled">false</bool>
 			<Content name="LinkedSource"><null></null></Content>
 			<token name="RunContext">0</token>
