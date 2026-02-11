@@ -15454,6 +15454,7 @@ local DayIndex = State:WaitForChild("DayIndex")
 
 local QUEST_RUNTIME_NAME = "QuestRuntime"
 local QUEST_SPAWNS_FOLDER_NAME = "QuestSpawns"
+local CAPTURE_NODE_FOLDER_NAME = "CaptureNodes"
 
 local function isDaytime(minutes)
 	return minutes >= TimeConfig.DayStartMinutes and minutes < TimeConfig.DayEndMinutes
@@ -15887,7 +15888,7 @@ end
 
 local function normalizeCaptureQuestFolder(captureRoot)
 	if not captureRoot then
-		return
+		return nil
 	end
 
 	local capturePointFolder = captureRoot:FindFirstChild("CapturePoint")
@@ -15897,6 +15898,31 @@ local function normalizeCaptureQuestFolder(captureRoot)
 		end
 		capturePointFolder:Destroy()
 	end
+
+	local nodesFolder = captureRoot:FindFirstChild(CAPTURE_NODE_FOLDER_NAME)
+	local legacyWaypoints = captureRoot:FindFirstChild("PartWaypoints")
+	if not nodesFolder then
+		nodesFolder = legacyWaypoints
+	end
+	if not nodesFolder then
+		nodesFolder = Instance.new("Folder")
+		nodesFolder.Name = CAPTURE_NODE_FOLDER_NAME
+		nodesFolder.Parent = captureRoot
+	end
+	nodesFolder.Name = CAPTURE_NODE_FOLDER_NAME
+
+	for _, child in ipairs(captureRoot:GetChildren()) do
+		if child:IsA("BasePart") and string.match(child.Name, "^Part%d+$") then
+			child.Parent = nodesFolder
+		end
+	end
+
+	local capCircle = captureRoot:FindFirstChild("CapCircle")
+	if capCircle then
+		capCircle.Parent = nodesFolder
+	end
+
+	return nodesFolder
 end
 
 local function validateCaptureQuestClone(captureRuntime)
@@ -15905,22 +15931,21 @@ local function validateCaptureQuestClone(captureRuntime)
 		return false
 	end
 
-	normalizeCaptureQuestFolder(captureRuntime)
-
-	local waypoints = captureRuntime:FindFirstChild("PartWaypoints")
-	if not waypoints then
-		warn("QuestService: Missing PartWaypoints under " .. captureRuntime:GetFullName())
+	local nodesFolder = normalizeCaptureQuestFolder(captureRuntime)
+	if not nodesFolder then
+		warn("QuestService: Missing capture nodes folder under " .. captureRuntime:GetFullName())
 		return false
 	end
-	local waypointParts = getSortedWaypointParts(waypoints)
+
+	local waypointParts = getSortedWaypointParts(nodesFolder)
 	if #waypointParts == 0 then
-		warn("QuestService: PartWaypoints has zero BaseParts under " .. waypoints:GetFullName())
+		warn("QuestService: " .. CAPTURE_NODE_FOLDER_NAME .. " has zero BaseParts under " .. nodesFolder:GetFullName())
 		return false
 	end
 
-	local capCircle = captureRuntime:FindFirstChild("CapCircle")
+	local capCircle = nodesFolder:FindFirstChild("CapCircle")
 	if not capCircle then
-		warn("QuestService: Missing CapCircle under " .. captureRuntime:GetFullName())
+		warn("QuestService: Missing CapCircle under " .. nodesFolder:GetFullName())
 		return false
 	end
 
@@ -15929,7 +15954,8 @@ local function validateCaptureQuestClone(captureRuntime)
 		table.insert(preview, waypointParts[i].Name)
 	end
 	print("QuestService: CaptureQuest cloned at", captureRuntime:GetFullName())
-	print("QuestService: PartWaypoints count", #waypointParts)
+	print("QuestService: " .. CAPTURE_NODE_FOLDER_NAME .. " path", nodesFolder:GetFullName())
+	print("QuestService: Waypoint count", #waypointParts)
 	print("QuestService: First waypoints", table.concat(preview, ", "))
 	print("QuestService: CapCircle path", capCircle:GetFullName())
 	return true
@@ -16239,7 +16265,8 @@ local function stopNightlyQuest(reason)
 	if contract and not questState.completed and reason == "night_end" then
 		questState.failed = true
 		if contract.Id == "capture_quest" and questState.runtimeQuestRoot then
-			local capCircle = questState.runtimeQuestRoot:FindFirstChild("CapCircle")
+			local nodesFolder = questState.runtimeQuestRoot:FindFirstChild(CAPTURE_NODE_FOLDER_NAME)
+			local capCircle = nodesFolder and nodesFolder:FindFirstChild("CapCircle")
 			local capBase = capCircle and capCircle:FindFirstChild("Base")
 			if capBase and capBase:IsA("BasePart") then
 				local failSound = Instance.new("Sound")
