@@ -16144,6 +16144,40 @@ local function cloneFolderSafely(sourceFolder, targetParent, targetName)
 	return clone
 end
 
+local function ensureWaypointPartsPresent(sourceFolder, targetFolder)
+	local function countBaseParts(folder)
+		local count = 0
+		for _, d in ipairs(folder:GetDescendants()) do
+			if d:IsA("BasePart") then
+				count += 1
+			end
+		end
+		return count
+	end
+
+	if countBaseParts(targetFolder) > 0 then
+		return
+	end
+
+	for _, child in ipairs(targetFolder:GetChildren()) do
+		child:Destroy()
+	end
+
+	for _, sourcePart in ipairs(sourceFolder:GetDescendants()) do
+		if sourcePart:IsA("BasePart") then
+			local wasArchivable = sourcePart.Archivable
+			sourcePart.Archivable = true
+			local ok, clone = pcall(function()
+				return sourcePart:Clone()
+			end)
+			sourcePart.Archivable = wasArchivable
+			if ok and clone then
+				clone.Parent = targetFolder
+			end
+		end
+	end
+end
+
 local function getSortedWaypoints(folder, prefix)
 	local points = {}
 	for _, child in ipairs(folder:GetChildren()) do
@@ -16332,6 +16366,9 @@ questHandlers.CapturePoint = {
 		local runtimeRoot = ensureQuestRuntimeFolder()
 		local runtimeCaptureFolder = cloneFolderSafely(captureFolder, runtimeRoot, settings.CapturePointFolderName)
 		local runtimeWaypointFolder = cloneFolderSafely(waypointFolder, runtimeRoot, settings.WaypointFolderName)
+		if runtimeWaypointFolder then
+			ensureWaypointPartsPresent(waypointFolder, runtimeWaypointFolder)
+		end
 		if not (runtimeCaptureFolder and runtimeWaypointFolder) then
 			warn("QuestService: Failed to clone capture runtime folders.")
 			if runtimeCaptureFolder then runtimeCaptureFolder:Destroy() end
