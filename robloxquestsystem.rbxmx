@@ -15704,7 +15704,22 @@ end
 
 local function getQuestAssetCaptureRoot()
 	local assets = ensureQuestAssetsRoot()
-	return assets:FindFirstChild(QuestSettings.Capture.RootFolderName)
+	local captureRootName = QuestSettings.Capture.RootFolderName
+
+	local direct = assets:FindFirstChild(captureRootName)
+	if direct then
+		return direct
+	end
+
+	local spawnsRoot = assets:FindFirstChild(QuestSettings.Pages.FolderName)
+	if spawnsRoot then
+		local nested = spawnsRoot:FindFirstChild(captureRootName)
+		if nested then
+			return nested
+		end
+	end
+
+	return assets:FindFirstChild(captureRootName, true)
 end
 
 local function ensureQuestRuntimeFolder()
