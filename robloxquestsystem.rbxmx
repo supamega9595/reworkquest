@@ -13419,6 +13419,7 @@ return RarityConfig]]></ProtectedString>
 		Type = "DeliverItem",
 		SpawnFolderName = "CaptureQuest",
 		RuntimeFolderName = "CaptureQuest",
+		FlattenIntoRuntime = true,
 		Settings = {
 			CrateTag = "QuestPickup_Crate",
 			DropTag = "QuestDrop_Crate",
@@ -15890,7 +15891,19 @@ local function validateCaptureQuestClone(captureRuntime)
 		warn("QuestService: CaptureQuest clone missing from QuestRuntime")
 		return false
 	end
-	local waypoints = captureRuntime:FindFirstChild("PartWaypoints")
+
+	local targetRoot = captureRuntime
+	if captureRuntime.Name == QUEST_RUNTIME_NAME then
+		local nested = captureRuntime:FindFirstChild("CaptureQuest")
+		if nested then
+			targetRoot = nested
+		end
+	end
+
+	local waypoints = targetRoot:FindFirstChild("PartWaypoints")
+	if not waypoints and captureRuntime.Name == QUEST_RUNTIME_NAME then
+		waypoints = captureRuntime:FindFirstChild("PartWaypoints")
+	end
 	if not waypoints then
 		warn("QuestService: Missing PartWaypoints under " .. captureRuntime:GetFullName())
 		return false
@@ -15900,7 +15913,11 @@ local function validateCaptureQuestClone(captureRuntime)
 		warn("QuestService: PartWaypoints has zero BaseParts under " .. waypoints:GetFullName())
 		return false
 	end
-	local capturePoint = captureRuntime:FindFirstChild("CapturePoint")
+
+	local capturePoint = targetRoot:FindFirstChild("CapturePoint")
+	if not capturePoint and captureRuntime.Name == QUEST_RUNTIME_NAME then
+		capturePoint = captureRuntime:FindFirstChild("CapturePoint")
+	end
 	local capCircle = capturePoint and capturePoint:FindFirstChild("CapCircle")
 	if not capCircle then
 		warn("QuestService: Missing CapturePoint.CapCircle under " .. captureRuntime:GetFullName())
@@ -15914,6 +15931,21 @@ local function validateCaptureQuestClone(captureRuntime)
 	print("QuestService: PartWaypoints count", #waypointParts)
 	print("QuestService: First waypoints", table.concat(preview, ", "))
 	return true
+end
+
+local function resolveCaptureRuntimeRoot()
+	local runtime = workspace:FindFirstChild(QUEST_RUNTIME_NAME)
+	if not runtime then
+		return nil
+	end
+	local nested = runtime:FindFirstChild("CaptureQuest")
+	if nested then
+		return nested
+	end
+	if runtime:FindFirstChild("CapturePoint") and runtime:FindFirstChild("PartWaypoints") then
+		return runtime
+	end
+	return nil
 end
 
 local function cloneQuestRuntime(contract)
@@ -15940,13 +15972,22 @@ local function cloneQuestRuntime(contract)
 	clone.Name = contract.RuntimeFolderName or sourceQuestFolder.Name
 	clone.Parent = runtime
 
-	if contract.Id == "capture_quest" and not validateCaptureQuestClone(clone) then
+	local runtimeRoot = clone
+	if contract.FlattenIntoRuntime then
+		for _, child in ipairs(clone:GetChildren()) do
+			child.Parent = runtime
+		end
+		clone:Destroy()
+		runtimeRoot = runtime
+	end
+
+	if contract.Id == "capture_quest" and not validateCaptureQuestClone(runtimeRoot) then
 		clearQuestRuntime()
 		return nil
 	end
 
-	questState.runtimeQuestRoot = clone
-	return clone
+	questState.runtimeQuestRoot = runtimeRoot
+	return runtimeRoot
 end
 
 local function registerDeathTracking(player)
@@ -16218,9 +16259,10 @@ local function stopNightlyQuest(reason)
 	if contract and not questState.completed and reason == "night_end" then
 		questState.failed = true
 		if contract.Id == "capture_quest" and questState.runtimeQuestRoot then
-			local capBase = questState.runtimeQuestRoot:FindFirstChild("CapturePoint")
-			and questState.runtimeQuestRoot.CapturePoint:FindFirstChild("CapCircle")
-			and questState.runtimeQuestRoot.CapturePoint.CapCircle:FindFirstChild("Base")
+			local captureRoot = resolveCaptureRuntimeRoot() or questState.runtimeQuestRoot
+			local capturePoint = captureRoot and captureRoot:FindFirstChild("CapturePoint")
+			local capCircle = capturePoint and capturePoint:FindFirstChild("CapCircle")
+			local capBase = capCircle and capCircle:FindFirstChild("Base")
 			if capBase and capBase:IsA("BasePart") then
 				local failSound = Instance.new("Sound")
 				failSound.Name = "CaptureQuestFail"
@@ -16323,13 +16365,14 @@ local function payoutNightRewards()
 
 	for _, player in ipairs(Players:GetPlayers()) do
 		local distance = questState.playerDistances[player] or 0
-		local survived = not questState.playerDied[player] and isPlayerAlive(player)
+		local eligibleForWin = isEligibleForNightWin(player)
+		local survived = eligibleForWin and not questState.playerDied[player] and isPlayerAlive(player)
 		local survivalCash = RewardsConfig.SurvivalCashBase
 		local completionCash = questState.completed and RewardsConfig.QuestCompleteCash or 0
 		local distanceCash = calculateDistanceCash(distance)
 		local totalCash = (survivalCash + completionCash + distanceCash) * rarityMultiplier
 		local xpAward = calculateXP(distance, survived, questState.completed)
-		local winsAward = isEligibleForNightWin(player) and 1 or 0
+		local winsAward = eligibleForWin and 1 or 0
 
 		awardCash(player, totalCash)
 		if winsAward > 0 then
