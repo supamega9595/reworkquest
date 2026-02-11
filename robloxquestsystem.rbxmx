@@ -13419,7 +13419,6 @@ return RarityConfig]]></ProtectedString>
 		Type = "DeliverItem",
 		SpawnFolderName = "CaptureQuest",
 		RuntimeFolderName = "CaptureQuest",
-		FlattenIntoRuntime = true,
 		Settings = {
 			CrateTag = "QuestPickup_Crate",
 			DropTag = "QuestDrop_Crate",
@@ -15886,24 +15885,29 @@ local function getSortedWaypointParts(waypointsFolder)
 	return parts
 end
 
+local function normalizeCaptureQuestFolder(captureRoot)
+	if not captureRoot then
+		return
+	end
+
+	local capturePointFolder = captureRoot:FindFirstChild("CapturePoint")
+	if capturePointFolder and capturePointFolder:IsA("Folder") then
+		for _, child in ipairs(capturePointFolder:GetChildren()) do
+			child.Parent = captureRoot
+		end
+		capturePointFolder:Destroy()
+	end
+end
+
 local function validateCaptureQuestClone(captureRuntime)
 	if not captureRuntime then
 		warn("QuestService: CaptureQuest clone missing from QuestRuntime")
 		return false
 	end
 
-	local targetRoot = captureRuntime
-	if captureRuntime.Name == QUEST_RUNTIME_NAME then
-		local nested = captureRuntime:FindFirstChild("CaptureQuest")
-		if nested then
-			targetRoot = nested
-		end
-	end
+	normalizeCaptureQuestFolder(captureRuntime)
 
-	local waypoints = targetRoot:FindFirstChild("PartWaypoints")
-	if not waypoints and captureRuntime.Name == QUEST_RUNTIME_NAME then
-		waypoints = captureRuntime:FindFirstChild("PartWaypoints")
-	end
+	local waypoints = captureRuntime:FindFirstChild("PartWaypoints")
 	if not waypoints then
 		warn("QuestService: Missing PartWaypoints under " .. captureRuntime:GetFullName())
 		return false
@@ -15914,15 +15918,12 @@ local function validateCaptureQuestClone(captureRuntime)
 		return false
 	end
 
-	local capturePoint = targetRoot:FindFirstChild("CapturePoint")
-	if not capturePoint and captureRuntime.Name == QUEST_RUNTIME_NAME then
-		capturePoint = captureRuntime:FindFirstChild("CapturePoint")
-	end
-	local capCircle = capturePoint and capturePoint:FindFirstChild("CapCircle")
+	local capCircle = captureRuntime:FindFirstChild("CapCircle")
 	if not capCircle then
-		warn("QuestService: Missing CapturePoint.CapCircle under " .. captureRuntime:GetFullName())
+		warn("QuestService: Missing CapCircle under " .. captureRuntime:GetFullName())
 		return false
 	end
+
 	local preview = {}
 	for i = 1, math.min(5, #waypointParts) do
 		table.insert(preview, waypointParts[i].Name)
@@ -15930,22 +15931,8 @@ local function validateCaptureQuestClone(captureRuntime)
 	print("QuestService: CaptureQuest cloned at", captureRuntime:GetFullName())
 	print("QuestService: PartWaypoints count", #waypointParts)
 	print("QuestService: First waypoints", table.concat(preview, ", "))
+	print("QuestService: CapCircle path", capCircle:GetFullName())
 	return true
-end
-
-local function resolveCaptureRuntimeRoot()
-	local runtime = workspace:FindFirstChild(QUEST_RUNTIME_NAME)
-	if not runtime then
-		return nil
-	end
-	local nested = runtime:FindFirstChild("CaptureQuest")
-	if nested then
-		return nested
-	end
-	if runtime:FindFirstChild("CapturePoint") and runtime:FindFirstChild("PartWaypoints") then
-		return runtime
-	end
-	return nil
 end
 
 local function cloneQuestRuntime(contract)
@@ -15973,13 +15960,6 @@ local function cloneQuestRuntime(contract)
 	clone.Parent = runtime
 
 	local runtimeRoot = clone
-	if contract.FlattenIntoRuntime then
-		for _, child in ipairs(clone:GetChildren()) do
-			child.Parent = runtime
-		end
-		clone:Destroy()
-		runtimeRoot = runtime
-	end
 
 	if contract.Id == "capture_quest" and not validateCaptureQuestClone(runtimeRoot) then
 		clearQuestRuntime()
@@ -16259,9 +16239,7 @@ local function stopNightlyQuest(reason)
 	if contract and not questState.completed and reason == "night_end" then
 		questState.failed = true
 		if contract.Id == "capture_quest" and questState.runtimeQuestRoot then
-			local captureRoot = resolveCaptureRuntimeRoot() or questState.runtimeQuestRoot
-			local capturePoint = captureRoot and captureRoot:FindFirstChild("CapturePoint")
-			local capCircle = capturePoint and capturePoint:FindFirstChild("CapCircle")
+			local capCircle = questState.runtimeQuestRoot:FindFirstChild("CapCircle")
 			local capBase = capCircle and capCircle:FindFirstChild("Base")
 			if capBase and capBase:IsA("BasePart") then
 				local failSound = Instance.new("Sound")
