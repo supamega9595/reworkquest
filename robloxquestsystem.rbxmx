@@ -16111,18 +16111,37 @@ local function findFirstByNames(root, names)
 	return nil
 end
 
-local function cloneChildrenSafely(sourceFolder, targetFolder)
-	for _, child in ipairs(sourceFolder:GetChildren()) do
-		local wasArchivable = child.Archivable
-		child.Archivable = true
-		local ok, clone = pcall(function()
-			return child:Clone()
-		end)
-		child.Archivable = wasArchivable
-		if ok and clone then
-			clone.Parent = targetFolder
+local function cloneFolderSafely(sourceFolder, targetParent, targetName)
+	local touched = {}
+	local function setArchivable(node)
+		if node:IsA("Instance") then
+			table.insert(touched, { node = node, archivable = node.Archivable })
+			node.Archivable = true
+		end
+		for _, child in ipairs(node:GetChildren()) do
+			setArchivable(child)
 		end
 	end
+
+	setArchivable(sourceFolder)
+	local ok, clone = pcall(function()
+		return sourceFolder:Clone()
+	end)
+	for i = #touched, 1, -1 do
+		local entry = touched[i]
+		if entry.node and entry.node.Parent ~= nil then
+			entry.node.Archivable = entry.archivable
+		end
+	end
+
+	if not (ok and clone) then
+		return nil
+	end
+	if targetName then
+		clone.Name = targetName
+	end
+	clone.Parent = targetParent
+	return clone
 end
 
 local function getSortedWaypoints(folder, prefix)
@@ -16311,15 +16330,14 @@ questHandlers.CapturePoint = {
 		end
 
 		local runtimeRoot = ensureQuestRuntimeFolder()
-		local runtimeCaptureFolder = Instance.new("Folder")
-		runtimeCaptureFolder.Name = settings.CapturePointFolderName
-		runtimeCaptureFolder.Parent = runtimeRoot
-		cloneChildrenSafely(captureFolder, runtimeCaptureFolder)
-
-		local runtimeWaypointFolder = Instance.new("Folder")
-		runtimeWaypointFolder.Name = settings.WaypointFolderName
-		runtimeWaypointFolder.Parent = runtimeRoot
-		cloneChildrenSafely(waypointFolder, runtimeWaypointFolder)
+		local runtimeCaptureFolder = cloneFolderSafely(captureFolder, runtimeRoot, settings.CapturePointFolderName)
+		local runtimeWaypointFolder = cloneFolderSafely(waypointFolder, runtimeRoot, settings.WaypointFolderName)
+		if not (runtimeCaptureFolder and runtimeWaypointFolder) then
+			warn("QuestService: Failed to clone capture runtime folders.")
+			if runtimeCaptureFolder then runtimeCaptureFolder:Destroy() end
+			if runtimeWaypointFolder then runtimeWaypointFolder:Destroy() end
+			return
+		end
 
 		local model = findFirstByNames(runtimeCaptureFolder, settings.CaptureModelNames)
 		if not (model and model:IsA("Model")) then
