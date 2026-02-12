@@ -41307,17 +41307,44 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local DataStoreService = game:GetService("DataStoreService")
 
-local function loadStatsConfig()
-	local configFolder = ReplicatedStorage:FindFirstChild("Configs")
-	local module = configFolder and configFolder:FindFirstChild("StatsConfig") or ReplicatedStorage:FindFirstChild("StatsConfig")
-	if not module then
-		module = configFolder and configFolder:FindFirstChild("StatConfig") or ReplicatedStorage:FindFirstChild("StatConfig")
+local CONTRACT = {
+	ConfigFolder = "Configs",
+	StatsConfigNames = { "StatsConfig", "StatConfig" },
+	TitlesConfigName = "TitlesConfig",
+	TitlesRemotes = "TitlesRemotes",
+	TitlesEquipRemote = "EquipTitle",
+	LeaderstatsFolder = "leaderstats",
+	EquippedTitleAttribute = "EquippedTitle",
+}
+
+local function loadConfigModule(candidates, fallback, fallbackWarn)
+	local configFolder = ReplicatedStorage:FindFirstChild(CONTRACT.ConfigFolder)
+	local module = nil
+
+	for _, moduleName in ipairs(candidates) do
+		if configFolder then
+			module = configFolder:FindFirstChild(moduleName)
+		end
+		if not module then
+			module = ReplicatedStorage:FindFirstChild(moduleName)
+		end
+		if module then
+			break
+		end
 	end
+
 	if not module then
-		module = configFolder and configFolder:WaitForChild("StatsConfig", 3) or ReplicatedStorage:WaitForChild("StatsConfig", 3)
-	end
-	if not module then
-		module = configFolder and configFolder:WaitForChild("StatConfig", 3) or ReplicatedStorage:WaitForChild("StatConfig", 3)
+		for _, moduleName in ipairs(candidates) do
+			if configFolder then
+				module = configFolder:WaitForChild(moduleName, 3)
+			end
+			if not module then
+				module = ReplicatedStorage:WaitForChild(moduleName, 3)
+			end
+			if module then
+				break
+			end
+		end
 	end
 
 	if module then
@@ -41327,26 +41354,16 @@ local function loadStatsConfig()
 		end
 	end
 
-	warn("[TitlesService] StatsConfig not found or failed to load; using defaults.")
-	return {}
+	warn(fallbackWarn)
+	return fallback
+end
+
+local function loadStatsConfig()
+	return loadConfigModule(CONTRACT.StatsConfigNames, {}, "[TitlesService] StatsConfig not found or failed to load; using defaults.")
 end
 
 local function loadTitlesConfig()
-	local configFolder = ReplicatedStorage:FindFirstChild("Configs")
-	local module = configFolder and configFolder:FindFirstChild("TitlesConfig") or ReplicatedStorage:FindFirstChild("TitlesConfig")
-	if not module then
-		module = configFolder and configFolder:WaitForChild("TitlesConfig", 3) or ReplicatedStorage:WaitForChild("TitlesConfig", 3)
-	end
-
-	if module then
-		local ok, result = pcall(require, module)
-		if ok and typeof(result) == "table" then
-			return result
-		end
-	end
-
-	warn("[TitlesService] TitlesConfig not found or failed to load; using defaults.")
-	return { Titles = {} }
+	return loadConfigModule({ CONTRACT.TitlesConfigName }, { Titles = {} }, "[TitlesService] TitlesConfig not found or failed to load; using defaults.")
 end
 
 local StatsConfig = loadStatsConfig()
@@ -41371,7 +41388,7 @@ local function computeLevel(totalXP: number): number
 end
 
 local function getPlayerXP(player: Player): number
-	local leaderstats = player:FindFirstChild("leaderstats")
+	local leaderstats = player:FindFirstChild(CONTRACT.LeaderstatsFolder)
 	if not leaderstats then
 		return 0
 	end
@@ -41383,17 +41400,17 @@ local function getPlayerXP(player: Player): number
 end
 
 local function ensureRemotes()
-	local remotes = ReplicatedStorage:FindFirstChild("TitlesRemotes")
+	local remotes = ReplicatedStorage:FindFirstChild(CONTRACT.TitlesRemotes)
 	if not remotes then
 		remotes = Instance.new("Folder")
-		remotes.Name = "TitlesRemotes"
+		remotes.Name = CONTRACT.TitlesRemotes
 		remotes.Parent = ReplicatedStorage
 	end
 
-	local equipEvent = remotes:FindFirstChild("EquipTitle")
+	local equipEvent = remotes:FindFirstChild(CONTRACT.TitlesEquipRemote)
 	if not equipEvent then
 		equipEvent = Instance.new("RemoteEvent")
-		equipEvent.Name = "EquipTitle"
+		equipEvent.Name = CONTRACT.TitlesEquipRemote
 		equipEvent.Parent = remotes
 	end
 
@@ -41401,6 +41418,8 @@ local function ensureRemotes()
 end
 
 local equipEvent = ensureRemotes()
+local lastEquipRequestByUserId = {}
+local EQUIP_REQUEST_COOLDOWN = 0.25
 
 local function loadEquippedTitle(player: Player)
 	local ok, saved = pcall(function()
@@ -41413,7 +41432,7 @@ local function loadEquippedTitle(player: Player)
 	if typeof(saved) == "string" and saved ~= "" then
 		local title = titlesById[saved]
 		if title then
-			player:SetAttribute("EquippedTitle", saved)
+			player:SetAttribute(CONTRACT.EquippedTitleAttribute, saved)
 		end
 	end
 end
@@ -41431,13 +41450,24 @@ Players.PlayerAdded:Connect(function(player: Player)
 	loadEquippedTitle(player)
 end)
 
+Players.PlayerRemoving:Connect(function(player: Player)
+	lastEquipRequestByUserId[player.UserId] = nil
+end)
+
 equipEvent.OnServerEvent:Connect(function(player: Player, titleId: string)
 	if typeof(titleId) ~= "string" then
 		return
 	end
 
+	local now = os.clock()
+	local lastRequest = lastEquipRequestByUserId[player.UserId] or 0
+	if (now - lastRequest) < EQUIP_REQUEST_COOLDOWN then
+		return
+	end
+	lastEquipRequestByUserId[player.UserId] = now
+
 	if titleId == "" then
-		player:SetAttribute("EquippedTitle", "")
+		player:SetAttribute(CONTRACT.EquippedTitleAttribute, "")
 		saveEquippedTitle(player, "")
 		return
 	end
@@ -41456,7 +41486,7 @@ equipEvent.OnServerEvent:Connect(function(player: Player, titleId: string)
 		return
 	end
 
-	player:SetAttribute("EquippedTitle", titleId)
+	player:SetAttribute(CONTRACT.EquippedTitleAttribute, titleId)
 	saveEquippedTitle(player, titleId)
 end)
 
@@ -47980,22 +48010,34 @@ local CONTRACT = {
 
 local function loadConfigModule(candidates, fallback, fallbackWarn)
 	local configFolder = ReplicatedStorage:FindFirstChild(CONTRACT.ConfigFolder)
-	local function tryFind(waitForChild)
-		for _, moduleName in ipairs(candidates) do
-			local module = if configFolder then
-				(if waitForChild then configFolder:WaitForChild(moduleName, 3) else configFolder:FindFirstChild(moduleName))
-			else nil
-			if not module then
-				module = if waitForChild then ReplicatedStorage:WaitForChild(moduleName, 3) else ReplicatedStorage:FindFirstChild(moduleName)
-			end
-			if module then
-				return module
-			end
+	local module = nil
+
+	for _, moduleName in ipairs(candidates) do
+		if configFolder then
+			module = configFolder:FindFirstChild(moduleName)
 		end
-		return nil
+		if not module then
+			module = ReplicatedStorage:FindFirstChild(moduleName)
+		end
+		if module then
+			break
+		end
 	end
 
-	local module = tryFind(false) or tryFind(true)
+	if not module then
+		for _, moduleName in ipairs(candidates) do
+			if configFolder then
+				module = configFolder:WaitForChild(moduleName, 3)
+			end
+			if not module then
+				module = ReplicatedStorage:WaitForChild(moduleName, 3)
+			end
+			if module then
+				break
+			end
+		end
+	end
+
 	if module then
 		local ok, result = pcall(require, module)
 		if ok and typeof(result) == "table" then
@@ -48046,6 +48088,11 @@ gui.IgnoreGuiInset = true
 gui.ResetOnSpawn = false
 
 local toggleEvent = gui:FindFirstChild(CONTRACT.ToggleEventName)
+if toggleEvent and (not toggleEvent:IsA("BindableEvent")) then
+	warn("[PlayerCardUi] TogglePlayerCard exists but is not BindableEvent. Recreating.")
+	toggleEvent:Destroy()
+	toggleEvent = nil
+end
 if not toggleEvent then
 	toggleEvent = Instance.new("BindableEvent")
 	toggleEvent.Name = CONTRACT.ToggleEventName
@@ -48076,6 +48123,11 @@ local sessionXP = 0
 
 -- Stats source
 local STAT_SOURCE_MODE = LevelConfig.StatSourceMode or "SessionOnly" -- "SessionOnly" or "Leaderstats"
+local ALLOW_CLIENT_SESSION_XP = LevelConfig.AllowClientSessionXP == true
+if STAT_SOURCE_MODE == "SessionOnly" and not ALLOW_CLIENT_SESSION_XP then
+	warn("[PlayerCardUi] For safety, forcing StatSourceMode to Leaderstats. Set Levels.AllowClientSessionXP=true to allow client-only XP display.")
+	STAT_SOURCE_MODE = "Leaderstats"
+end
 local leaderConfig = LevelConfig.Leaderstats or {}
 local LEADERSTAT_XP_NAME = leaderConfig.XP or "XP"
 local LEADERSTAT_PLAYTIME_NAME = leaderConfig.PlaytimeSeconds or "PlaytimeSeconds"
@@ -48390,11 +48442,11 @@ local function getEquippedTitleId(): string?
 end
 
 local function setEquippedTitleId(id: string?)
-	if titlesEquipEvent then
-		titlesEquipEvent:FireServer(id or "")
-	else
-		plr:SetAttribute(CONTRACT.EquippedTitleAttribute, id or "")
+	if not titlesEquipEvent then
+		warn("[PlayerCardUi] Cannot equip title; server remote missing.")
+		return
 	end
+	titlesEquipEvent:FireServer(id or "")
 end
 
 --//////////////////////////////////////////////////////////
@@ -50140,7 +50192,10 @@ end
 --//////////////////////////////////////////////////////////
 local openButtonConns = {}
 
-local function bindOpenButton(button: GuiButton)
+local function bindOpenButton(button)
+	if not button or not button:IsA("GuiButton") then
+		return
+	end
 	if openButtonConns[button] then
 		return
 	end
@@ -50148,38 +50203,23 @@ local function bindOpenButton(button: GuiButton)
 		click()
 		openUI()
 	end)
-	button.Destroying:Connect(function()
-		local conn = openButtonConns[button]
-		if conn then
-			conn:Disconnect()
-			openButtonConns[button] = nil
-		end
-	end)
 end
 
 local function scanAndBindOpenButtons()
 	for _, name in ipairs(OPEN_BUTTON_NAMES) do
 		local guiBtn = gui:FindFirstChild(name, true)
-		if guiBtn and guiBtn:IsA("GuiButton") then
-			bindOpenButton(guiBtn)
-		end
+		bindOpenButton(guiBtn)
 		local playerGuiBtn = playerGui:FindFirstChild(name, true)
-		if playerGuiBtn and playerGuiBtn:IsA("GuiButton") then
-			bindOpenButton(playerGuiBtn)
-		end
+		bindOpenButton(playerGuiBtn)
 	end
 end
 
 scanAndBindOpenButtons()
-playerGui.DescendantAdded:Connect(function(desc)
-	if desc:IsA("GuiButton") then
-		scanAndBindOpenButtons()
-	end
+playerGui.DescendantAdded:Connect(function()
+	scanAndBindOpenButtons()
 end)
-gui.DescendantAdded:Connect(function(desc)
-	if desc:IsA("GuiButton") then
-		scanAndBindOpenButtons()
-	end
+gui.DescendantAdded:Connect(function()
+	scanAndBindOpenButtons()
 end)
 
 --//////////////////////////////////////////////////////////
