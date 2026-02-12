@@ -22965,9 +22965,9 @@ barCorner.CornerRadius = UDim.new(1, 0)
 barCorner.Parent = bar
 
 local barStroke = Instance.new("UIStroke")
-barStroke.Color = Color3.fromRGB(63, 54, 44)
+barStroke.Color = Color3.fromRGB(66, 68, 84)
 barStroke.Thickness = 1
-barStroke.Transparency = 0.38
+barStroke.Transparency = 0.46
 barStroke.Parent = bar
 
 local barTexture = Instance.new("Frame")
@@ -23040,7 +23040,7 @@ threatLabel.BackgroundTransparency = 1
 threatLabel.Position = UDim2.new(0, 0, 0, 0)
 threatLabel.Size = UDim2.new(0, 160, 1, 0)
 threatLabel.Font = Enum.Font.GothamBold
-threatLabel.Text = "DREAD: LOW"
+threatLabel.Text = "THREAT: LOW"
 threatLabel.TextColor3 = Color3.fromRGB(198, 116, 96)
 threatLabel.TextSize = 11
 threatLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -23101,20 +23101,77 @@ local function threatTier(threatPercent)
 	return "LOW"
 end
 
-local function setThreat(data, rarityColor)
-	local threatPercent = data and data.ThreatPercent
-	local threatText = data and data.ThreatLabel
-	if type(threatPercent) ~= "number" and type(threatText) ~= "string" then
+local tierFallbackPercent = {
+	LOW = 0.2,
+	ELEVATED = 0.5,
+	SEVERE = 0.72,
+	CRITICAL = 0.9,
+}
+
+local rarityThreatFallback = {
+	Common = 0.2,
+	Uncommon = 0.35,
+	Rare = 0.5,
+	Epic = 0.7,
+	Legendary = 0.88,
+}
+
+local function resolveThreatFields(data, rarity)
+	if type(data) ~= "table" then
+		return nil, nil
+	end
+
+	local rawPercent = data.ThreatPercent
+	if type(rawPercent) ~= "number" then
+		rawPercent = data.Threat
+	end
+	if type(rawPercent) ~= "number" then
+		rawPercent = data.ThreatValue
+	end
+	if type(rawPercent) ~= "number" then
+		rawPercent = data.ContractThreat
+	end
+
+	if type(rawPercent) == "number" and rawPercent > 1 then
+		rawPercent = rawPercent / 100
+	end
+
+	local rawLabel = data.ThreatLabel
+	if type(rawLabel) ~= "string" or rawLabel == "" then
+		rawLabel = data.ThreatTier
+	end
+	if type(rawLabel) ~= "string" or rawLabel == "" then
+		rawLabel = data.ThreatText
+	end
+
+	if type(rawPercent) ~= "number" and (type(rawLabel) ~= "string" or rawLabel == "") then
+		rawPercent = rarityThreatFallback[rarity]
+	end
+
+	if type(rawPercent) ~= "number" and type(rawLabel) == "string" and rawLabel ~= "" then
+		rawPercent = tierFallbackPercent[string.upper(rawLabel)] or 0.2
+	end
+
+	if type(rawPercent) ~= "number" then
+		return nil, nil
+	end
+
+	local p = clampPercent(rawPercent)
+	local tierText = type(rawLabel) == "string" and rawLabel ~= "" and string.upper(rawLabel) or threatTier(p)
+	return p, tierText
+end
+
+local function setThreat(data, rarityColor, rarity)
+	local p, tierText = resolveThreatFields(data, rarity)
+	if type(p) ~= "number" then
 		threatRow.Visible = false
 		progressText.Position = UDim2.new(0, 14, 1, -22)
 		return
 	end
 
-	local p = clampPercent(threatPercent)
-	local tierText = type(threatText) == "string" and threatText ~= "" and string.upper(threatText) or threatTier(p)
 	threatRow.Visible = true
 	progressText.Position = UDim2.new(0, 14, 1, -21)
-	threatLabel.Text = "DREAD: " .. tierText
+	threatLabel.Text = "THREAT: " .. tierText
 
 	local danger = blend(Color3.fromRGB(208, 70, 67), Color3.fromRGB(188, 126, 74), 1 - p)
 	local dangerAccent = blend(danger, rarityColor, 0.12)
@@ -23182,7 +23239,7 @@ local function setState(data)
 	end
 	currentPercent = percent
 
-	setThreat(data, rarityColor)
+	setThreat(data, rarityColor, rarity)
 end
 
 local function animateShow()
