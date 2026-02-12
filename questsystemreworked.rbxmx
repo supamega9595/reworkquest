@@ -11359,7 +11359,7 @@ return ShopConfig]]></ProtectedString>
 				<Properties>
 					<Content name="LinkedSource"><null></null></Content>
 					<ProtectedString name="Source"><![CDATA[local RarityConfig = {
-	RarityOrder = {"Common", "Epic", "Legendary"},
+	RarityOrder = {"Common", "Uncommon", "Rare", "Epic", "Legendary"},
 	Rarities = {
 		Common = {
 			DisplayName = "Common",
@@ -11371,6 +11371,28 @@ return ShopConfig]]></ProtectedString>
 				Stroke = Color3.fromRGB(70, 70, 70),
 			},
 			Effects = { GradientDrift = false, Pulse = false, Shimmer = false },
+		},
+		Uncommon = {
+			DisplayName = "Uncommon",
+			DefaultThreat = 35,
+			Theme = {
+				Accent = Color3.fromRGB(125, 214, 123),
+				BgTop = Color3.fromRGB(20, 34, 20),
+				BgBottom = Color3.fromRGB(9, 18, 9),
+				Stroke = Color3.fromRGB(92, 150, 90),
+			},
+			Effects = { GradientDrift = false, Pulse = false, Shimmer = false },
+		},
+		Rare = {
+			DisplayName = "Rare",
+			DefaultThreat = 45,
+			Theme = {
+				Accent = Color3.fromRGB(109, 165, 255),
+				BgTop = Color3.fromRGB(18, 30, 52),
+				BgBottom = Color3.fromRGB(8, 14, 26),
+				Stroke = Color3.fromRGB(80, 118, 180),
+			},
+			Effects = { GradientDrift = true, Pulse = false, Shimmer = false },
 		},
 		Epic = {
 			DisplayName = "Epic",
@@ -11408,7 +11430,8 @@ function RarityConfig.getThreatTier(threat)
 	return "LOW"
 end
 
-return RarityConfig]]></ProtectedString>
+return RarityConfig
+]]></ProtectedString>
 					<string name="ScriptGuid">{e3314035-e0b8-49cc-99a6-acb3599eabdf}</string>
 					<BinaryString name="AttributesSerialize"></BinaryString>
 					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
@@ -11523,7 +11546,7 @@ return RarityConfig]]></ProtectedString>
 		Threat = 15,
 		Description = "Scattered notes keep the spirits restless. Gather them before night deepens.",
 		Objectives = {
-			"Collect 8 cursed pages",
+			"Collect pages before dawn",
 			"Work together - progress is shared",
 		},
 		Type = "SharedCollectCount",
@@ -11558,21 +11581,6 @@ return RarityConfig]]></ProtectedString>
 			DecelTime = 1.25,
 		},
 	},
-	{
-		Id = "butterfly_crate",
-		Name = "Butterfly Crate",
-		Rarity = "Legendary",
-		Description = "Retrieve the marked crate and deliver it to the warded drop zone.",
-		Objectives = {
-			"Locate the butterfly crate",
-			"Deliver it to the drop marker",
-		},
-		Type = "DeliverItem",
-		Settings = {
-			CrateTag = "QuestPickup_Crate",
-			DropTag = "QuestDrop_Crate",
-		},
-	},
 }
 ]]></ProtectedString>
 					<string name="ScriptGuid">{2d5db30d-9156-49b3-813c-4c0d087788d3}</string>
@@ -11588,7 +11596,7 @@ return RarityConfig]]></ProtectedString>
 				<Properties>
 					<Content name="LinkedSource"><null></null></Content>
 					<ProtectedString name="Source"><![CDATA[return {
-	ForceContract = true,
+	ForceContract = false,
 	ForcedContractId = "daily_pages",
 	RuntimeFolderName = "QuestRuntime",
 	QuestSpawnsFolderName = "QuestSpawns",
@@ -11625,16 +11633,19 @@ return RarityConfig]]></ProtectedString>
 		DistancePerStud = 0.02,
 	},
 	MultipliersByRarity = {
-		Common = 1,
-		Epic = 1.2,
-		Legendary = 1.5,
+		Common = 1.00,
+		Uncommon = 1.25,
+		Rare = 1.55,
+		Epic = 2.00,
+		Legendary = 2.60,
 	},
 	Distance = {
 		MinSpeedToCount = 8,
 		SoftCapDistance = 900,
 		PostCapMultiplier = 0.25,
 	},
-}]]></ProtectedString>
+}
+]]></ProtectedString>
 					<string name="ScriptGuid">{ac2f104d-024d-4d9c-98c5-a53117c8984f}</string>
 					<BinaryString name="AttributesSerialize"></BinaryString>
 					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
@@ -13203,6 +13214,13 @@ local ShowNightSummary = Remotes:WaitForChild("ShowNightSummary")
 
 local ActiveContractId = State:WaitForChild("ActiveContractId")
 local DayIndex = State:WaitForChild("DayIndex")
+local ActiveContractRarity = State:FindFirstChild("ActiveContractRarity")
+if not ActiveContractRarity then
+	ActiveContractRarity = Instance.new("StringValue")
+	ActiveContractRarity.Name = "ActiveContractRarity"
+	ActiveContractRarity.Value = "Common"
+	ActiveContractRarity.Parent = State
+end
 
 local function isDaytime(minutes)
 	return minutes >= TimeConfig.DayStartMinutes and minutes < TimeConfig.DayEndMinutes
@@ -13217,20 +13235,21 @@ local function getContractById(contractId)
 	return nil
 end
 
-local function chooseDailyContract()
-	if QuestSettings.ForceContract then
-		local forced = getContractById(QuestSettings.ForcedContractId)
-		if not forced then
-			warn("QuestService: Forced contract id not found:", QuestSettings.ForcedContractId)
-		else
-			return forced
-		end
-	end
-	if #QuestContractsConfig == 0 then
-		warn("QuestContractsConfig has no contracts configured.")
+local function rollQuestAssignment()
+	local questPool = {"daily_pages", "capture_ring"}
+	local rarityPool = {"Common", "Uncommon", "Rare", "Epic", "Legendary"}
+	print("Quest pool = {Pages, CaptureQuest}")
+	local questId = questPool[math.random(1, #questPool)]
+	local rarity = rarityPool[math.random(1, #rarityPool)]
+	local contract = getContractById(questId)
+	if not contract then
+		warn("QuestService: rolled quest id missing from config:", questId)
 		return nil
 	end
-	return QuestContractsConfig[math.random(1, #QuestContractsConfig)]
+	ActiveContractId.Value = questId
+	ActiveContractRarity.Value = rarity
+	print(string.format("[QuestService] Assigned quest for night: %s rarity=%s", questId, rarity))
+	return contract
 end
 
 local questState = {
@@ -13335,6 +13354,21 @@ end
 
 local function isNightEligible(player)
 	return questState.nightEligibleUserIds[player.UserId] == true
+end
+
+local function getAssignedRarity()
+	return ActiveContractRarity.Value ~= "" and ActiveContractRarity.Value or "Common"
+end
+
+local function getPagesTargetForRarity(rarity)
+	local counts = {
+		Common = 6,
+		Uncommon = 8,
+		Rare = 10,
+		Epic = 12,
+		Legendary = 14,
+	}
+	return counts[rarity] or 8
 end
 
 local function getPlayerFromHit(hit)
@@ -13648,7 +13682,7 @@ local questHandlers = {}
 
 questHandlers.SharedCollectCount = {
 	start = function(contract)
-		questState.target = contract.Settings.Count or 1
+		questState.target = getPagesTargetForRarity(getAssignedRarity())
 		questState.progress = 0
 		questState.completed = false
 		local pickupTag = contract.Settings.PickupTag
@@ -13690,64 +13724,7 @@ questHandlers.SharedCollectCount = {
 	end,
 }
 
-questHandlers.DeliverItem = {
-	start = function(contract)
-		questState.completed = false
-		questState.progress = 0
-		questState.target = 1
-		local crateTag = contract.Settings.CrateTag
-		local dropTag = contract.Settings.DropTag
 
-		local function markPicked(crate, player)
-			if player then
-				crate:SetAttribute("QuestCarrierUserId", player.UserId)
-			end
-		end
-
-		local function connectCrate(crate)
-			local part = getPickupBasePart(crate)
-			if not part then return end
-			local prompt = crate:FindFirstChildOfClass("ProximityPrompt")
-			if prompt then
-				table.insert(questState.connections, prompt.Triggered:Connect(function(player) markPicked(crate, player) end))
-			else
-				table.insert(questState.connections, part.Touched:Connect(function(hit)
-					local player = getPlayerFromHit(hit)
-					if player then markPicked(crate, player) end
-				end))
-			end
-		end
-
-		local function getCrateFromHit(hit)
-			local node = hit
-			while node and node ~= workspace do
-				if CollectionService:HasTag(node, crateTag) then return node end
-				node = node.Parent
-			end
-			return nil
-		end
-
-		local function connectDrop(drop)
-			local part = getPickupBasePart(drop)
-			if not part then return end
-			table.insert(questState.connections, part.Touched:Connect(function(hit)
-				local crate = getCrateFromHit(hit)
-				if crate and crate:GetAttribute("QuestCarrierUserId") then
-					questState.completed = true
-					questState.progress = 1
-				end
-			end))
-		end
-
-		for _, crate in ipairs(CollectionService:GetTagged(crateTag)) do connectCrate(crate) end
-		for _, drop in ipairs(CollectionService:GetTagged(dropTag)) do connectDrop(drop) end
-		table.insert(questState.connections, CollectionService:GetInstanceAddedSignal(crateTag):Connect(connectCrate))
-		table.insert(questState.connections, CollectionService:GetInstanceAddedSignal(dropTag):Connect(connectDrop))
-	end,
-	stop = function()
-		clearQuestConnections()
-	end,
-}
 
 questHandlers.CaptureQuest = {
 	start = function(contract)
@@ -13959,6 +13936,7 @@ questHandlers.CaptureQuest = {
 local function startNightlyQuest(contract)
 	clearQuestConnections()
 	cleanupNightRuntime()
+	contract.Rarity = getAssignedRarity()
 	questState.activeContract = contract
 	questState.startTime = os.time()
 	questState.playerDistances = {}
@@ -13968,6 +13946,13 @@ local function startNightlyQuest(contract)
 		questState.playerDied[player] = false
 		questState.nightEligibleUserIds[player.UserId] = true
 	end
+	local sampleEligible = {}
+	for userId in pairs(questState.nightEligibleUserIds) do
+		table.insert(sampleEligible, tostring(userId))
+	end
+	table.sort(sampleEligible)
+	local preview = table.concat(sampleEligible, ", ", 1, math.min(6, #sampleEligible))
+	print(string.format("[QuestService] Night eligible count=%d sample={%s}", #sampleEligible, preview))
 
 	createRuntimeRoot(contract)
 
@@ -14070,20 +14055,18 @@ local function payoutNightRewards()
 		local distance = eligible and (questState.playerDistances[player] or 0) or 0
 		local completionAwarded = eligible and questState.completed
 		local survivalAwarded = eligible and isPlayerAlive(player)
-		local survivalCash = survivalAwarded and (RewardsConfig.SurvivalCashBase * rarityMultiplier) or 0
-		local completionCash = completionAwarded and (RewardsConfig.QuestCompleteCash * rarityMultiplier) or 0
+		local baseSurvivalCash = survivalAwarded and RewardsConfig.SurvivalCashBase or 0
+		local baseCompletionCash = completionAwarded and RewardsConfig.QuestCompleteCash or 0
 		local distanceCash = eligible and calculateDistanceCash(distance) or 0
-		local totalCash = survivalCash + completionCash + distanceCash
-		local xpAward = eligible and calculateXP(distance, survivalAwarded, completionAwarded) or 0
-		if eligible then
-			local xpConfig = RewardsConfig.XP or {}
-			local distanceXP = distance * (xpConfig.DistancePerStud or 0)
-			local scaled = 0
-			if survivalAwarded then scaled += (xpConfig.SurvivalBase or 0) * rarityMultiplier end
-			if completionAwarded then scaled += (xpConfig.CompletionBonus or 0) * rarityMultiplier end
-			xpAward = math.floor(scaled + distanceXP)
-		end
+		local totalCash = ((baseSurvivalCash + baseCompletionCash) * rarityMultiplier) + distanceCash
+
+		local xpConfig = RewardsConfig.XP or {}
+		local baseSurvivalXP = survivalAwarded and (xpConfig.SurvivalBase or 0) or 0
+		local baseCompletionXP = completionAwarded and (xpConfig.CompletionBonus or 0) or 0
+		local distanceXP = eligible and (distance * (xpConfig.DistancePerStud or 0)) or 0
+		local xpAward = math.floor(((baseSurvivalXP + baseCompletionXP) * rarityMultiplier) + distanceXP)
 		local winsAward = survivalAwarded and 1 or 0
+		print(string.format("[QuestService] Dawn player=%s eligible=%s survived=%s wins=%d", player.Name, tostring(eligible), tostring(survivalAwarded), winsAward))
 
 		if totalCash > 0 then awardCash(player, totalCash) end
 		if winsAward > 0 then awardWins(player, 1) end
@@ -14123,7 +14106,8 @@ end
 local function getResolvedContractData(player)
 	local contract = getContractById(ActiveContractId.Value)
 	if not contract then return nil end
-	local rarityData = RarityConfig.Rarities[contract.Rarity]
+	local assignedRarity = getAssignedRarity()
+	local rarityData = RarityConfig.Rarities[assignedRarity] or RarityConfig.Rarities.Common
 	local threat = contract.Threat or (rarityData and rarityData.DefaultThreat) or 0
 	local accepted = player:GetAttribute("AcceptedContractId") == contract.Id and player:GetAttribute("AcceptedContractDay") == DayIndex.Value
 	return {
@@ -14131,7 +14115,7 @@ local function getResolvedContractData(player)
 		Name = contract.Name,
 		Description = contract.Description,
 		Objectives = contract.Objectives,
-		Rarity = contract.Rarity,
+		Rarity = assignedRarity,
 		Threat = threat,
 		DayIndex = DayIndex.Value,
 		Accepted = accepted,
@@ -14158,14 +14142,17 @@ AcceptContract.OnServerEvent:Connect(function(player, contractId)
 end)
 
 local function rollNewContract()
-	local contract = chooseDailyContract()
-	if contract then ActiveContractId.Value = contract.Id end
+	rollQuestAssignment()
 end
 
 local lastIsDayRef = { value = isDaytime(Lighting:GetMinutesAfterMidnight()) }
 if lastIsDayRef.value then
 	DayIndex.Value = math.max(DayIndex.Value, 1)
-	if ActiveContractId.Value == "" then rollNewContract() end
+	if ActiveContractId.Value == "" then
+		rollNewContract()
+	elseif ActiveContractRarity.Value == "" then
+		ActiveContractRarity.Value = "Common"
+	end
 end
 
 ensureNpcPrompt(lastIsDayRef.value)
@@ -14204,6 +14191,9 @@ Players.PlayerAdded:Connect(function(player)
 	questState.playerLastPositions[player] = nil
 	questState.playerDied[player] = false
 	registerDeathTracking(player)
+	if not isDaytime(Lighting:GetMinutesAfterMidnight()) then
+		print("Late joiner (no credit): " .. player.Name)
+	end
 end)
 
 Players.PlayerRemoving:Connect(function(player)
@@ -20136,6 +20126,7 @@ local QuestContractsConfig = require(Config.QuestContractsConfig)
 
 local RequestContractUI = Remotes:WaitForChild("RequestContractUI")
 local ActiveContractId = State:WaitForChild("ActiveContractId")
+local ActiveContractRarity = State:WaitForChild("ActiveContractRarity")
 
 local npc = script.Parent
 local prompt = npc:WaitForChild("ProximityPrompt")
@@ -20165,7 +20156,7 @@ prompt.Triggered:Connect(function(player)
 
 	local introLines = dialogData.Intro
 	local contract = isDay and getActiveContract()
-	if contract and contract.Rarity == "Legendary" then
+	if contract and ActiveContractRarity.Value == "Legendary" then
 		local flair = DialogueConfig.RarityFlair and DialogueConfig.RarityFlair.Legendary
 		if flair and #flair > 0 then
 			introLines = flair
