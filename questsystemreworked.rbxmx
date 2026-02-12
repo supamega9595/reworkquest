@@ -13460,12 +13460,28 @@ local function getAssignedRarity()
 	return ActiveContractRarity.Value ~= "" and ActiveContractRarity.Value or "Common"
 end
 
+local DefaultPagesRequiredByRarity = {
+	Common = 6,
+	Uncommon = 8,
+	Rare = 10,
+	Epic = 12,
+	Legendary = 14,
+}
+
+local DefaultCaptureByRarity = {
+	Common = { RequiredSeconds = 200, DecayPercent = 0.35, ReverseChance = 0.06, BurstChance = 0.35, BurstDurationMin = 4, BurstDurationMax = 8, WaypointPauseSeconds = 3.0 },
+	Uncommon = { RequiredSeconds = 240, DecayPercent = 0.50, ReverseChance = 0.10, BurstChance = 0.50, BurstDurationMin = 5, BurstDurationMax = 15, WaypointPauseSeconds = 2.5 },
+	Rare = { RequiredSeconds = 280, DecayPercent = 0.65, ReverseChance = 0.14, BurstChance = 0.60, BurstDurationMin = 6, BurstDurationMax = 16, WaypointPauseSeconds = 2.0 },
+	Epic = { RequiredSeconds = 330, DecayPercent = 0.80, ReverseChance = 0.18, BurstChance = 0.70, BurstDurationMin = 7, BurstDurationMax = 18, WaypointPauseSeconds = 1.5 },
+	Legendary = { RequiredSeconds = 390, DecayPercent = 0.95, ReverseChance = 0.22, BurstChance = 0.80, BurstDurationMin = 8, BurstDurationMax = 20, WaypointPauseSeconds = 1.0 },
+}
+
 local function getPagesTargetForRarity(rarity)
-	local counts = QuestSettings.Pages and QuestSettings.Pages.RequiredByRarity or nil
+	local counts = (QuestSettings.Pages and QuestSettings.Pages.RequiredByRarity) or DefaultPagesRequiredByRarity
 	if type(counts) ~= "table" then
-		return 8
+		counts = DefaultPagesRequiredByRarity
 	end
-	return counts[rarity] or counts.Common or 8
+	return counts[rarity] or counts.Common or DefaultPagesRequiredByRarity.Common
 end
 
 local function isNightParticipant(player)
@@ -13877,6 +13893,7 @@ local questHandlers = {}
 questHandlers.SharedCollectCount = {
 	start = function(contract)
 		questState.target = getPagesTargetForRarity(getAssignedRarity())
+		print(string.format("[PagesQuest] Rarity=%s RequiredPages=%d", getAssignedRarity(), questState.target))
 		questState.progress = 0
 		questState.completed = false
 		local pickupTag = contract.Settings.PickupTag
@@ -13971,16 +13988,11 @@ questHandlers.CaptureQuest = {
 
 		local settings = contract.Settings or {}
 		local rarity = contract.Rarity or getAssignedRarity()
-		local captureByRarity = (((QuestSettings or {}).CaptureQuest or {}).ByRarity) or {}
-		local raritySettings = captureByRarity[rarity] or captureByRarity.Uncommon or {
-			RequiredSeconds = 240,
-			DecayPercent = 0.50,
-			ReverseChance = 0.10,
-			BurstChance = 0.50,
-			BurstDurationMin = 5,
-			BurstDurationMax = 15,
-			WaypointPauseSeconds = 2.5,
-		}
+		local captureByRarity = (((QuestSettings or {}).CaptureQuest or {}).ByRarity) or DefaultCaptureByRarity
+		if type(captureByRarity) ~= "table" then
+			captureByRarity = DefaultCaptureByRarity
+		end
+		local raritySettings = captureByRarity[rarity] or DefaultCaptureByRarity[rarity] or captureByRarity.Uncommon or DefaultCaptureByRarity.Uncommon
 		local baseSpeed = settings.BaseSpeed or 14
 		local burstMultiplier = settings.BurstMultiplier or 2
 		local accelerationTime = settings.AccelTime or 1.25
@@ -14281,7 +14293,7 @@ local function payoutNightRewards()
 		local joinedMidNight = joinedDuringActiveNight(player)
 		local _, _, joinTimestamp = getPlayerJoinMeta(player)
 		local joinedAfterNightStart = (type(joinTimestamp) == "number") and (joinTimestamp > (questState.nightStartTimestamp or 0))
-		local joinedLate = late or joinedMidNight or joinedAfterNightStart or (player:GetAttribute("QuestJoinedDuringNight") == true) or (not eligible)
+		local joinedLate = late or joinedMidNight or joinedAfterNightStart
 		local alive = isPlayerAlive(player)
 		local distanceEligible = eligible or late or joinedMidNight
 		local distance = distanceEligible and (questState.playerDistances[player] or 0) or 0
@@ -22400,42 +22412,46 @@ local function buildUi()
 	countdownLabel.Size = UDim2.new(1, 0, 0, 22)
 	countdownLabel.ZIndex = 9
 
-	local lateJoinWarning = Instance.new("TextLabel")
-	lateJoinWarning.Name = "LateJoinWarning"
-	lateJoinWarning.BackgroundColor3 = Color3.fromRGB(68, 18, 18)
-	lateJoinWarning.BackgroundTransparency = 0.18
-	lateJoinWarning.BorderSizePixel = 0
-	lateJoinWarning.Position = UDim2.new(0, UI_CONFIG.PanelPadding.Left, 0, UI_CONFIG.PanelPadding.Top + UI_CONFIG.TitleHeight + UI_CONFIG.SubtitleHeight + 2)
-	lateJoinWarning.Size = UDim2.new(0.62, 0, 0, 28)
-	lateJoinWarning.Font = Enum.Font.GothamBold
-	lateJoinWarning.Text = "Joined late - only distance credit"
-	lateJoinWarning.TextColor3 = Color3.fromRGB(255, 120, 120)
-	lateJoinWarning.TextSize = 19
-	lateJoinWarning.TextTransparency = 0
-	lateJoinWarning.TextXAlignment = Enum.TextXAlignment.Left
-	lateJoinWarning.TextYAlignment = Enum.TextYAlignment.Center
-	lateJoinWarning.Visible = false
-	lateJoinWarning.ZIndex = 10
-	lateJoinWarning.Parent = panel
+	local lateWarningFrame = Instance.new("Frame")
+	lateWarningFrame.Name = "LateJoinWarning"
+	lateWarningFrame.BackgroundColor3 = Color3.fromRGB(58, 14, 14)
+	lateWarningFrame.BackgroundTransparency = 0.12
+	lateWarningFrame.BorderSizePixel = 0
+	lateWarningFrame.Position = UDim2.new(0, 0, 0, 40)
+	lateWarningFrame.Size = UDim2.new(1, 0, 0, 34)
+	lateWarningFrame.Visible = false
+	lateWarningFrame.ZIndex = 10
+	lateWarningFrame.Parent = panel
 
 	local lateWarningCorner = Instance.new("UICorner")
-	lateWarningCorner.CornerRadius = UDim.new(0, 8)
-	lateWarningCorner.Parent = lateJoinWarning
-
-	local lateWarningPadding = Instance.new("UIPadding")
-	lateWarningPadding.PaddingLeft = UDim.new(0, 10)
-	lateWarningPadding.PaddingRight = UDim.new(0, 8)
-	lateWarningPadding.Parent = lateJoinWarning
+	lateWarningCorner.CornerRadius = UDim.new(0, 16)
+	lateWarningCorner.Parent = lateWarningFrame
 
 	local lateWarningStroke = Instance.new("UIStroke")
-	lateWarningStroke.Color = Color3.fromRGB(255, 70, 70)
-	lateWarningStroke.Thickness = 1
-	lateWarningStroke.Transparency = 0.15
-	lateWarningStroke.Parent = lateJoinWarning
+	lateWarningStroke.Color = Color3.fromRGB(235, 92, 92)
+	lateWarningStroke.Thickness = 1.5
+	lateWarningStroke.Transparency = 0.05
+	lateWarningStroke.Parent = lateWarningFrame
+
+	local lateWarningText = Instance.new("TextLabel")
+	lateWarningText.Name = "Text"
+	lateWarningText.BackgroundTransparency = 1
+	lateWarningText.Size = UDim2.new(1, -24, 1, 0)
+	lateWarningText.Position = UDim2.new(0, 12, 0, 0)
+	lateWarningText.Font = Enum.Font.GothamBold
+	lateWarningText.Text = "NO CREDIT: You joined after night started."
+	lateWarningText.TextColor3 = Color3.fromRGB(255, 120, 120)
+	lateWarningText.TextSize = 35
+	lateWarningText.TextScaled = true
+	lateWarningText.TextWrapped = true
+	lateWarningText.TextXAlignment = Enum.TextXAlignment.Center
+	lateWarningText.TextYAlignment = Enum.TextYAlignment.Center
+	lateWarningText.ZIndex = 11
+	lateWarningText.Parent = lateWarningFrame
 
 	UI.StatusLabel = statusLabel
 	UI.CountdownLabel = countdownLabel
-	UI.LateJoinWarning = lateJoinWarning
+	UI.LateJoinWarning = lateWarningFrame
 
 	local outcomeContainer = Instance.new("Frame")
 	outcomeContainer.Name = "OutcomeContainer"
