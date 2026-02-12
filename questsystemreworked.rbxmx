@@ -22801,12 +22801,27 @@ local Remotes = QuestSystem:WaitForChild("Remotes")
 local NightHUDUpdate = Remotes:WaitForChild("NightHUDUpdate")
 
 local gui = script.Parent
+
 local rarityColors = {
-	Common = Color3.fromRGB(210, 210, 210),
-	Uncommon = Color3.fromRGB(126, 214, 125),
-	Rare = Color3.fromRGB(110, 165, 255),
-	Epic = Color3.fromRGB(170, 110, 255),
-	Legendary = Color3.fromRGB(255, 200, 110),
+	Common = Color3.fromRGB(196, 194, 185),
+	Uncommon = Color3.fromRGB(127, 174, 121),
+	Rare = Color3.fromRGB(103, 136, 178),
+	Epic = Color3.fromRGB(141, 103, 173),
+	Legendary = Color3.fromRGB(206, 161, 93),
+}
+
+local rarityFillColors = {
+	Common = { Color3.fromRGB(120, 110, 88), Color3.fromRGB(176, 167, 140) },
+	Uncommon = { Color3.fromRGB(77, 98, 67), Color3.fromRGB(128, 157, 112) },
+	Rare = { Color3.fromRGB(62, 85, 117), Color3.fromRGB(112, 144, 184) },
+	Epic = { Color3.fromRGB(83, 63, 112), Color3.fromRGB(139, 101, 176) },
+	Legendary = { Color3.fromRGB(130, 92, 44), Color3.fromRGB(221, 177, 97) },
+}
+
+local UIConfig = {
+	BarPulseTime = 0.14,
+	FillTweenTime = 0.22,
+	ThreatTweenTime = 0.2,
 }
 
 local function blend(a, b, t)
@@ -22824,6 +22839,14 @@ local function clampPercent(v)
 	return math.clamp(v, 0, 1)
 end
 
+local function getRarityColor(rarity)
+	return rarityColors[rarity] or rarityColors.Common
+end
+
+local function getFillColors(rarity)
+	return table.unpack(rarityFillColors[rarity] or rarityFillColors.Common)
+end
+
 gui.ResetOnSpawn = false
 gui.Enabled = false
 
@@ -22832,11 +22855,19 @@ root.Name = "Main"
 root.AnchorPoint = Vector2.new(0.5, 0)
 root.Position = UDim2.fromScale(0.5, 0.03)
 root.Size = UDim2.fromScale(0.44, 0.14)
-root.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
-root.BackgroundTransparency = 0.12
+root.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
+root.BackgroundTransparency = 0.09
 root.BorderSizePixel = 0
 root.ClipsDescendants = false
 root.Parent = gui
+
+local rootGradient = Instance.new("UIGradient")
+rootGradient.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(16, 14, 20)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(8, 8, 12)),
+})
+rootGradient.Rotation = 135
+rootGradient.Parent = root
 
 local rootScale = Instance.new("UIScale")
 rootScale.Scale = 1
@@ -22847,16 +22878,16 @@ corner.CornerRadius = UDim.new(0, 12)
 corner.Parent = root
 
 local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(140, 140, 140)
-stroke.Thickness = 1.4
-stroke.Transparency = 0.16
+stroke.Color = Color3.fromRGB(120, 107, 84)
+stroke.Thickness = 1.35
+stroke.Transparency = 0.2
 stroke.Parent = root
 
 local glowStroke = Instance.new("UIStroke")
 glowStroke.Name = "GlowStroke"
-glowStroke.Color = Color3.fromRGB(140, 140, 140)
-glowStroke.Thickness = 3.5
-glowStroke.Transparency = 0.68
+glowStroke.Color = Color3.fromRGB(120, 107, 84)
+glowStroke.Thickness = 3.2
+glowStroke.Transparency = 0.74
 glowStroke.Parent = root
 
 local sizeConstraint = Instance.new("UISizeConstraint")
@@ -22871,7 +22902,7 @@ title.Position = UDim2.new(0, 14, 0, 6)
 title.Size = UDim2.new(1, -28, 0, 24)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 18
-title.TextColor3 = Color3.fromRGB(242, 242, 242)
+title.TextColor3 = Color3.fromRGB(232, 226, 212)
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Text = "Night Quest"
 title.TextTruncate = Enum.TextTruncate.AtEnd
@@ -22884,16 +22915,16 @@ titleSizeConstraint.Parent = title
 
 local completeTag = Instance.new("TextLabel")
 completeTag.Name = "CompletedTag"
-completeTag.BackgroundColor3 = Color3.fromRGB(48, 86, 58)
-completeTag.BackgroundTransparency = 0.15
+completeTag.BackgroundColor3 = Color3.fromRGB(64, 88, 68)
+completeTag.BackgroundTransparency = 0.18
 completeTag.BorderSizePixel = 0
 completeTag.AnchorPoint = Vector2.new(1, 0)
 completeTag.Position = UDim2.new(1, -12, 0, 8)
 completeTag.Size = UDim2.new(0, 126, 0, 20)
 completeTag.Font = Enum.Font.GothamBold
-completeTag.Text = "COMPLETED"
-completeTag.TextColor3 = Color3.fromRGB(218, 255, 228)
-completeTag.TextSize = 12
+completeTag.Text = "OBJECTIVE SEALED"
+completeTag.TextColor3 = Color3.fromRGB(213, 235, 206)
+completeTag.TextSize = 11
 completeTag.Visible = false
 completeTag.ZIndex = 5
 completeTag.Parent = root
@@ -22909,7 +22940,7 @@ progressText.Position = UDim2.new(0, 14, 1, -22)
 progressText.Size = UDim2.new(1, -28, 0, 16)
 progressText.Font = Enum.Font.GothamSemibold
 progressText.TextSize = 14
-progressText.TextColor3 = Color3.fromRGB(226, 226, 226)
+progressText.TextColor3 = Color3.fromRGB(212, 210, 203)
 progressText.TextXAlignment = Enum.TextXAlignment.Right
 progressText.Text = "0/0"
 progressText.TextTruncate = Enum.TextTruncate.AtEnd
@@ -22922,7 +22953,7 @@ progressSizeConstraint.Parent = progressText
 
 local bar = Instance.new("Frame")
 bar.Name = "ProgressBar"
-bar.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+bar.BackgroundColor3 = Color3.fromRGB(22, 20, 26)
 bar.BorderSizePixel = 0
 bar.Position = UDim2.new(0, 14, 0, 36)
 bar.Size = UDim2.new(1, -28, 0, 16)
@@ -22933,9 +22964,35 @@ local barCorner = Instance.new("UICorner")
 barCorner.CornerRadius = UDim.new(1, 0)
 barCorner.Parent = bar
 
+local barStroke = Instance.new("UIStroke")
+barStroke.Color = Color3.fromRGB(63, 54, 44)
+barStroke.Thickness = 1
+barStroke.Transparency = 0.38
+barStroke.Parent = bar
+
+local barTexture = Instance.new("Frame")
+barTexture.Name = "Texture"
+barTexture.BackgroundTransparency = 1
+barTexture.Size = UDim2.fromScale(1, 1)
+barTexture.Parent = bar
+
+local barTextureGradient = Instance.new("UIGradient")
+barTextureGradient.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+	ColorSequenceKeypoint.new(0.55, Color3.fromRGB(178, 178, 178)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255)),
+})
+barTextureGradient.Transparency = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 0.95),
+	NumberSequenceKeypoint.new(0.5, 0.88),
+	NumberSequenceKeypoint.new(1, 0.95),
+})
+barTextureGradient.Rotation = 90
+barTextureGradient.Parent = barTexture
+
 local fill = Instance.new("Frame")
 fill.Name = "Fill"
-fill.BackgroundColor3 = rarityColors.Common
+fill.BackgroundColor3 = Color3.fromRGB(150, 124, 86)
 fill.BorderSizePixel = 0
 fill.Size = UDim2.new(0, 0, 1, 0)
 fill.Parent = bar
@@ -22944,38 +23001,30 @@ local fillCorner = Instance.new("UICorner")
 fillCorner.CornerRadius = UDim.new(1, 0)
 fillCorner.Parent = fill
 
-local fillGloss = Instance.new("Frame")
-fillGloss.Name = "Gloss"
-fillGloss.BackgroundTransparency = 1
-fillGloss.Size = UDim2.new(1, 0, 1, 0)
-fillGloss.Parent = fill
-
-local fillGlossGradient = Instance.new("UIGradient")
-fillGlossGradient.Color = ColorSequence.new({
-	ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
-	ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255)),
+local fillGradient = Instance.new("UIGradient")
+fillGradient.Name = "FillGradient"
+fillGradient.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(116, 84, 49)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(206, 161, 93)),
 })
-fillGlossGradient.Transparency = NumberSequence.new({
-	NumberSequenceKeypoint.new(0, 0.88),
-	NumberSequenceKeypoint.new(0.5, 0.65),
-	NumberSequenceKeypoint.new(1, 0.92),
+fillGradient.Rotation = 0
+fillGradient.Parent = fill
+
+local fillSheen = Instance.new("Frame")
+fillSheen.Name = "Sheen"
+fillSheen.BackgroundTransparency = 1
+fillSheen.Size = UDim2.fromScale(1, 1)
+fillSheen.Parent = fill
+
+local fillSheenGradient = Instance.new("UIGradient")
+fillSheenGradient.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(255, 255, 255))
+fillSheenGradient.Transparency = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 0.92),
+	NumberSequenceKeypoint.new(0.45, 0.72),
+	NumberSequenceKeypoint.new(1, 0.94),
 })
-fillGlossGradient.Rotation = 25
-fillGlossGradient.Parent = fillGloss
-
-local edge = Instance.new("Frame")
-edge.Name = "Edge"
-edge.AnchorPoint = Vector2.new(0.5, 0)
-edge.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-edge.BackgroundTransparency = 0.35
-edge.BorderSizePixel = 0
-edge.Position = UDim2.new(0, 0, 0, 0)
-edge.Size = UDim2.new(0, 3, 1, 0)
-edge.Parent = bar
-
-local edgeCorner = Instance.new("UICorner")
-edgeCorner.CornerRadius = UDim.new(1, 0)
-edgeCorner.Parent = edge
+fillSheenGradient.Rotation = 25
+fillSheenGradient.Parent = fillSheen
 
 local threatRow = Instance.new("Frame")
 threatRow.Name = "ThreatRow"
@@ -22989,20 +23038,20 @@ local threatLabel = Instance.new("TextLabel")
 threatLabel.Name = "ThreatLabel"
 threatLabel.BackgroundTransparency = 1
 threatLabel.Position = UDim2.new(0, 0, 0, 0)
-threatLabel.Size = UDim2.new(0, 150, 1, 0)
+threatLabel.Size = UDim2.new(0, 160, 1, 0)
 threatLabel.Font = Enum.Font.GothamBold
-threatLabel.Text = "THREAT: LOW"
-threatLabel.TextColor3 = Color3.fromRGB(255, 148, 120)
+threatLabel.Text = "DREAD: LOW"
+threatLabel.TextColor3 = Color3.fromRGB(198, 116, 96)
 threatLabel.TextSize = 11
 threatLabel.TextXAlignment = Enum.TextXAlignment.Left
 threatLabel.Parent = threatRow
 
 local threatBar = Instance.new("Frame")
 threatBar.Name = "ThreatBar"
-threatBar.BackgroundColor3 = Color3.fromRGB(48, 26, 24)
+threatBar.BackgroundColor3 = Color3.fromRGB(36, 18, 20)
 threatBar.BorderSizePixel = 0
-threatBar.Position = UDim2.new(0, 156, 0, 2)
-threatBar.Size = UDim2.new(1, -156, 0, 9)
+threatBar.Position = UDim2.new(0, 164, 0, 2)
+threatBar.Size = UDim2.new(1, -164, 0, 9)
 threatBar.ClipsDescendants = true
 threatBar.Parent = threatRow
 
@@ -23012,7 +23061,7 @@ threatBarCorner.Parent = threatBar
 
 local threatFill = Instance.new("Frame")
 threatFill.Name = "Fill"
-threatFill.BackgroundColor3 = Color3.fromRGB(255, 118, 84)
+threatFill.BackgroundColor3 = Color3.fromRGB(177, 88, 70)
 threatFill.BorderSizePixel = 0
 threatFill.Size = UDim2.new(0, 0, 1, 0)
 threatFill.Parent = threatBar
@@ -23039,45 +23088,78 @@ end
 local currentPercent = 0
 local currentlyVisible = false
 local completedFlashThread
+local activePulseToken = 0
+
+local function threatTier(threatPercent)
+	if threatPercent >= 0.85 then
+		return "CRITICAL"
+	elseif threatPercent >= 0.65 then
+		return "SEVERE"
+	elseif threatPercent >= 0.4 then
+		return "ELEVATED"
+	end
+	return "LOW"
+end
 
 local function setThreat(data, rarityColor)
 	local threatPercent = data and data.ThreatPercent
 	local threatText = data and data.ThreatLabel
-	if type(threatPercent) ~= "number" or type(threatText) ~= "string" or threatText == "" then
+	if type(threatPercent) ~= "number" and type(threatText) ~= "string" then
 		threatRow.Visible = false
 		progressText.Position = UDim2.new(0, 14, 1, -22)
 		return
 	end
+
+	local p = clampPercent(threatPercent)
+	local tierText = type(threatText) == "string" and threatText ~= "" and string.upper(threatText) or threatTier(p)
 	threatRow.Visible = true
 	progressText.Position = UDim2.new(0, 14, 1, -21)
-	local p = clampPercent(threatPercent)
-	threatLabel.Text = "THREAT: " .. string.upper(threatText)
-	local danger = blend(Color3.fromRGB(224, 72, 62), Color3.fromRGB(255, 172, 98), 1 - p)
-	threatFill.BackgroundColor3 = blend(danger, rarityColor, 0.18)
-	TweenService:Create(threatFill, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+	threatLabel.Text = "DREAD: " .. tierText
+
+	local danger = blend(Color3.fromRGB(208, 70, 67), Color3.fromRGB(188, 126, 74), 1 - p)
+	local dangerAccent = blend(danger, rarityColor, 0.12)
+	threatLabel.TextColor3 = blend(dangerAccent, Color3.fromRGB(228, 205, 196), 0.15)
+	threatFill.BackgroundColor3 = dangerAccent
+	TweenService:Create(threatFill, TweenInfo.new(UIConfig.ThreatTweenTime, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 		Size = UDim2.new(p, 0, 1, 0)
 	}):Play()
 end
 
 local function pulseProgressBar()
-	local up = TweenService:Create(bar, TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-		Size = UDim2.new(1, -28, 0, 17)
+	activePulseToken += 1
+	local pulseToken = activePulseToken
+	fillSheenGradient.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.72),
+		NumberSequenceKeypoint.new(0.45, 0.4),
+		NumberSequenceKeypoint.new(1, 0.78),
 	})
-	local down = TweenService:Create(bar, TweenInfo.new(0.10, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-		Size = UDim2.new(1, -28, 0, 16)
+	local pulse = TweenService:Create(fillSheenGradient, TweenInfo.new(UIConfig.BarPulseTime, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
+		Rotation = 8,
 	})
-	up:Play()
-	up.Completed:Once(function()
-		down:Play()
+	pulse:Play()
+	pulse.Completed:Once(function()
+		if pulseToken ~= activePulseToken then
+			return
+		end
+		fillSheenGradient.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.92),
+			NumberSequenceKeypoint.new(0.45, 0.72),
+			NumberSequenceKeypoint.new(1, 0.94),
+		})
 	end)
 end
 
 local function setState(data)
 	local rarity = data.Rarity or "Common"
-	local rarityColor = rarityColors[rarity] or rarityColors.Common
-	stroke.Color = rarityColor
+	local rarityColor = getRarityColor(rarity)
+	local fillStart, fillEnd = getFillColors(rarity)
+	stroke.Color = blend(rarityColor, Color3.fromRGB(120, 95, 70), 0.45)
 	glowStroke.Color = rarityColor
-	fill.BackgroundColor3 = rarityColor
+	fill.BackgroundColor3 = fillEnd
+	fillGradient.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, fillStart),
+		ColorSequenceKeypoint.new(1, fillEnd),
+	})
 
 	title.Text = string.format("%s • %s", data.QuestName or "Night Quest", string.upper(rarity))
 
@@ -23091,11 +23173,9 @@ local function setState(data)
 	end
 
 	local percent = clampPercent(data.Percent)
-	TweenService:Create(fill, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+	TweenService:Create(fill, TweenInfo.new(UIConfig.FillTweenTime, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 		Size = UDim2.new(percent, 0, 1, 0)
 	}):Play()
-	edge.Visible = percent > 0
-	edge.Position = UDim2.new(percent, 0, 0, 0)
 
 	if percent > currentPercent + 0.001 then
 		pulseProgressBar()
@@ -23110,13 +23190,13 @@ local function animateShow()
 	gui.Enabled = true
 	root.Visible = true
 	rootScale.Scale = 0.92
-	root.BackgroundTransparency = 0.28
-	stroke.Transparency = 0.75
+	root.BackgroundTransparency = 0.24
+	stroke.Transparency = 0.74
 	glowStroke.Transparency = 1
 	TweenService:Create(rootScale, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
-	TweenService:Create(root, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 0.12}):Play()
-	TweenService:Create(stroke, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Transparency = 0.16}):Play()
-	TweenService:Create(glowStroke, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Transparency = 0.68}):Play()
+	TweenService:Create(root, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 0.09}):Play()
+	TweenService:Create(stroke, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Transparency = 0.2}):Play()
+	TweenService:Create(glowStroke, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Transparency = 0.74}):Play()
 end
 
 local function animateHide()
@@ -23126,7 +23206,7 @@ local function animateHide()
 	end
 	currentlyVisible = false
 	local t1 = TweenService:Create(rootScale, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Scale = 0.95})
-	local t2 = TweenService:Create(root, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {BackgroundTransparency = 0.32})
+	local t2 = TweenService:Create(root, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {BackgroundTransparency = 0.34})
 	local t3 = TweenService:Create(stroke, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Transparency = 1})
 	local t4 = TweenService:Create(glowStroke, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Transparency = 1})
 	t1:Play(); t2:Play(); t3:Play(); t4:Play()
@@ -23139,19 +23219,19 @@ end
 
 local function flashCompleted(rarity)
 	completeTag.Visible = true
-	completeTag.BackgroundColor3 = blend(rarityColors[rarity] or rarityColors.Common, Color3.fromRGB(34, 90, 62), 0.45)
+	completeTag.BackgroundColor3 = blend(getRarityColor(rarity), Color3.fromRGB(34, 90, 62), 0.45)
 	if completedFlashThread then
 		task.cancel(completedFlashThread)
 	end
 	completedFlashThread = task.spawn(function()
 		local baseColor = stroke.Color
-		for i = 1, 3 do
-			TweenService:Create(stroke, TweenInfo.new(0.09, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Color = Color3.fromRGB(255, 244, 212)}):Play()
-			TweenService:Create(glowStroke, TweenInfo.new(0.09, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Transparency = 0.45}):Play()
-			task.wait(0.09)
-			TweenService:Create(stroke, TweenInfo.new(0.10, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Color = baseColor}):Play()
-			TweenService:Create(glowStroke, TweenInfo.new(0.10, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Transparency = 0.68}):Play()
+		for _ = 1, 2 do
+			TweenService:Create(stroke, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Color = Color3.fromRGB(214, 201, 166)}):Play()
+			TweenService:Create(glowStroke, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Transparency = 0.52}):Play()
 			task.wait(0.1)
+			TweenService:Create(stroke, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Color = baseColor}):Play()
+			TweenService:Create(glowStroke, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Transparency = 0.74}):Play()
+			task.wait(0.12)
 		end
 		task.wait(1)
 		completeTag.Visible = false
