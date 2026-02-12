@@ -50111,33 +50111,50 @@ end
 --//////////////////////////////////////////////////////////
 -- OPEN BUTTON HOOK
 --//////////////////////////////////////////////////////////
-local hooked = false
-local function tryHookOpenButton()
-	if hooked then return end
+local connectedButtons: {[Instance]: boolean} = {}
+
+local function connectOpenButton(candidate: Instance)
+	if connectedButtons[candidate] then return end
+	if not candidate:IsA("GuiButton") then return end
+
+	connectedButtons[candidate] = true
+	candidate.MouseButton1Click:Connect(function()
+		click()
+		openUI()
+	end)
+
+	candidate.AncestryChanged:Connect(function(_, parent)
+		if not parent then
+			connectedButtons[candidate] = nil
+		end
+	end)
+end
+
+local function tryHookOpenButtons()
 	for _, name in ipairs(OPEN_BUTTON_NAMES) do
-		local openBtn = gui:FindFirstChild(name, true)
-			or playerGui:FindFirstChild(name, true)
-		if openBtn and openBtn:IsA("GuiButton") then
-			hooked = true
-			openBtn.MouseButton1Click:Connect(function()
-				click()
-				openUI()
-			end)
+		for _, root in ipairs({gui, playerGui}) do
+			for _, inst in ipairs(root:GetDescendants()) do
+				if inst.Name == name then
+					connectOpenButton(inst)
+				end
+			end
 		end
 	end
 end
 
-tryHookOpenButton()
-playerGui.DescendantAdded:Connect(function()
-	if not hooked then
-		tryHookOpenButton()
+tryHookOpenButtons()
+
+local function onDescendantAdded(inst: Instance)
+	for _, name in ipairs(OPEN_BUTTON_NAMES) do
+		if inst.Name == name then
+			connectOpenButton(inst)
+			return
+		end
 	end
-end)
-gui.DescendantAdded:Connect(function()
-	if not hooked then
-		tryHookOpenButton()
-	end
-end)
+end
+
+playerGui.DescendantAdded:Connect(onDescendantAdded)
+gui.DescendantAdded:Connect(onDescendantAdded)
 
 --//////////////////////////////////////////////////////////
 -- CATALOG REFRESH
