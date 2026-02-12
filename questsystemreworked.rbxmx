@@ -11420,11 +11420,11 @@ return ShopConfig]]></ProtectedString>
 }
 
 function RarityConfig.getThreatTier(threat)
-	if threat >= 76 then
+	if threat >= 75 then
 		return "EXTREME"
-	elseif threat >= 51 then
+	elseif threat >= 50 then
 		return "HIGH"
-	elseif threat >= 26 then
+	elseif threat >= 25 then
 		return "MED"
 	end
 	return "LOW"
@@ -13211,6 +13211,12 @@ local RequestContractUI = Remotes:WaitForChild("RequestContractUI")
 local ShowContractUI = Remotes:WaitForChild("ShowContractUI")
 local AcceptContract = Remotes:WaitForChild("AcceptContract")
 local ShowNightSummary = Remotes:WaitForChild("ShowNightSummary")
+local NightHUDUpdate = Remotes:FindFirstChild("NightHUDUpdate")
+if not NightHUDUpdate then
+	NightHUDUpdate = Instance.new("RemoteEvent")
+	NightHUDUpdate.Name = "NightHUDUpdate"
+	NightHUDUpdate.Parent = Remotes
+end
 
 local ActiveContractId = State:WaitForChild("ActiveContractId")
 local DayIndex = State:WaitForChild("DayIndex")
@@ -13235,24 +13241,53 @@ local function getContractById(contractId)
 	return nil
 end
 
+local questState
+
+local function computeThreat(questType, rarity)
+	local baseByQuest = {
+		Pages = 20,
+		CaptureQuest = 40,
+	}
+	local addByRarity = {
+		Common = 0,
+		Uncommon = 10,
+		Rare = 20,
+		Epic = 30,
+		Legendary = 40,
+	}
+	return math.clamp((baseByQuest[questType] or 0) + (addByRarity[rarity] or 0), 0, 100)
+end
+
 local function rollQuestAssignment()
-	local questPool = {"daily_pages", "capture_ring"}
+	local pool = {"Pages", "CaptureQuest"}
 	local rarityPool = {"Common", "Uncommon", "Rare", "Epic", "Legendary"}
-	print("Quest pool = {Pages, CaptureQuest}")
-	local questId = questPool[math.random(1, #questPool)]
+	print("[Quest] Pool:", table.concat(pool, ", "))
+	local questType = pool[math.random(1, #pool)]
 	local rarity = rarityPool[math.random(1, #rarityPool)]
+	local questIdByType = {
+		Pages = "daily_pages",
+		CaptureQuest = "capture_ring",
+	}
+	local questId = questIdByType[questType]
 	local contract = getContractById(questId)
 	if not contract then
 		warn("QuestService: rolled quest id missing from config:", questId)
 		return nil
 	end
+	local threat = computeThreat(questType, rarity)
+	questState.currentContract = {
+		QuestId = questType,
+		Rarity = rarity,
+		Threat = threat,
+		AssignedAt = os.time(),
+	}
 	ActiveContractId.Value = questId
 	ActiveContractRarity.Value = rarity
-	print(string.format("[QuestService] Assigned quest for night: %s rarity=%s", questId, rarity))
+	print(string.format("[QuestService] Assigned quest for night: %s rarity=%s threat=%d", questType, rarity, threat))
 	return contract
 end
 
-local questState = {
+questState = {
 	activeContract = nil,
 	progress = 0,
 	target = 0,
@@ -13268,6 +13303,9 @@ local questState = {
 	runtimeFolder = nil,
 	runtimeQuestRoot = nil,
 	captureState = nil,
+	lateJoinerUserIds = {},
+	currentContract = nil,
+	hudState = { active = false, completed = false, questName = "", rarity = "Common", current = 0, required = 1, percent = 0 },
 }
 
 local function clearQuestConnections()
@@ -13369,6 +13407,62 @@ local function getPagesTargetForRarity(rarity)
 		Legendary = 14,
 	}
 	return counts[rarity] or 8
+end
+
+local function isNightParticipant(player)
+	return isNightEligible(player) or questState.lateJoinerUserIds[player.UserId] == true
+end
+
+local function broadcastNightHUD(payload)
+	for _, player in ipairs(Players:GetPlayers()) do
+		NightHUDUpdate:FireClient(player, payload)
+	end
+end
+
+local function setNightHUDProgress(current, required, completed)
+	required = math.max(required or 1, 1)
+	local clamped = math.clamp(current or 0, 0, required)
+	questState.hudState.current = clamped
+	questState.hudState.required = required
+	questState.hudState.percent = clamped / required
+	if completed ~= nil then
+		questState.hudState.completed = completed
+	end
+	broadcastNightHUD({
+		Type = "Progress",
+		QuestId = questState.currentContract and questState.currentContract.QuestId or "",
+		QuestName = questState.hudState.questName,
+		Rarity = questState.hudState.rarity,
+		Current = clamped,
+		Required = required,
+		Percent = questState.hudState.percent,
+		Completed = questState.hudState.completed,
+	})
+end
+
+local function showNightHUD(questName, rarity, current, required)
+	questState.hudState.active = true
+	questState.hudState.completed = false
+	questState.hudState.questName = questName
+	questState.hudState.rarity = rarity
+	setNightHUDProgress(current, required, false)
+	broadcastNightHUD({
+		Type = "Start",
+		QuestId = questState.currentContract and questState.currentContract.QuestId or "",
+		QuestName = questName,
+		Rarity = rarity,
+		Current = questState.hudState.current,
+		Required = questState.hudState.required,
+		Percent = questState.hudState.percent,
+		Completed = false,
+	})
+end
+
+local function endNightHUD()
+	if questState.hudState.active then
+		broadcastNightHUD({Type = "End"})
+	end
+	questState.hudState = { active = false, completed = false, questName = "", rarity = "Common", current = 0, required = 1, percent = 0 }
 end
 
 local function getPlayerFromHit(hit)
@@ -13695,8 +13789,10 @@ questHandlers.SharedCollectCount = {
 				hideCollectedPage(instance)
 			end
 			questState.progress += 1
+			setNightHUDProgress(questState.progress, questState.target, false)
 			if questState.progress >= questState.target then
 				questState.completed = true
+				setNightHUDProgress(questState.target, questState.target, true)
 			end
 		end
 
@@ -13871,12 +13967,14 @@ questHandlers.CaptureQuest = {
 				else
 					questState.progress = math.clamp(questState.progress - (delta * decayPercent), 0, required)
 				end
+				setNightHUDProgress(math.floor(questState.progress), required, false)
 				if questState.progress >= required and not questState.completed then
 					questState.completed = true
 					print("Capture quest completed")
 					if state.burstLoopSound then state.burstLoopSound:Stop() end
 					play3DSound("rbxassetid://135134898038127", basePart, 2000)
 					state.running = false
+					setNightHUDProgress(required, required, true)
 					if captureRoot.Parent then
 						captureRoot:Destroy()
 					end
@@ -13936,12 +14034,19 @@ questHandlers.CaptureQuest = {
 local function startNightlyQuest(contract)
 	clearQuestConnections()
 	cleanupNightRuntime()
-	contract.Rarity = getAssignedRarity()
+	local currentContract = questState.currentContract
+	if currentContract then
+		contract.Rarity = currentContract.Rarity
+		contract.Threat = currentContract.Threat
+	else
+		contract.Rarity = getAssignedRarity()
+	end
 	questState.activeContract = contract
 	questState.startTime = os.time()
 	questState.playerDistances = {}
 	questState.playerLastPositions = {}
 	questState.nightEligibleUserIds = {}
+	questState.lateJoinerUserIds = {}
 	for _, player in ipairs(Players:GetPlayers()) do
 		questState.playerDied[player] = false
 		questState.nightEligibleUserIds[player.UserId] = true
@@ -13966,6 +14071,7 @@ local function startNightlyQuest(contract)
 	if contract.Type == "SharedCollectCount" then
 		activatePageQuest()
 	end
+	showNightHUD(contract.Name, contract.Rarity, questState.progress, questState.target > 0 and questState.target or 1)
 end
 
 local function stopNightlyQuest(nightEnded)
@@ -13983,6 +14089,8 @@ local function stopNightlyQuest(nightEnded)
 	questState.progress = 0
 	questState.target = 0
 	questState.nightEligibleUserIds = {}
+	questState.lateJoinerUserIds = {}
+	endNightHUD()
 end
 
 local function calculateDistanceCash(distance)
@@ -14052,9 +14160,12 @@ local function payoutNightRewards()
 
 	for _, player in ipairs(Players:GetPlayers()) do
 		local eligible = isNightEligible(player)
-		local distance = eligible and (questState.playerDistances[player] or 0) or 0
+		local late = questState.lateJoinerUserIds[player.UserId] == true
+		local alive = isPlayerAlive(player)
+		local distanceEligible = eligible or late
+		local distance = distanceEligible and (questState.playerDistances[player] or 0) or 0
 		local completionAwarded = eligible and questState.completed
-		local survivalAwarded = eligible and isPlayerAlive(player)
+		local survivalAwarded = eligible and alive
 		local baseSurvivalCash = survivalAwarded and RewardsConfig.SurvivalCashBase or 0
 		local baseCompletionCash = completionAwarded and RewardsConfig.QuestCompleteCash or 0
 		local distanceCash = eligible and calculateDistanceCash(distance) or 0
@@ -14063,10 +14174,10 @@ local function payoutNightRewards()
 		local xpConfig = RewardsConfig.XP or {}
 		local baseSurvivalXP = survivalAwarded and (xpConfig.SurvivalBase or 0) or 0
 		local baseCompletionXP = completionAwarded and (xpConfig.CompletionBonus or 0) or 0
-		local distanceXP = eligible and (distance * (xpConfig.DistancePerStud or 0)) or 0
+		local distanceXP = distanceEligible and (distance * (xpConfig.DistancePerStud or 0)) or 0
 		local xpAward = math.floor(((baseSurvivalXP + baseCompletionXP) * rarityMultiplier) + distanceXP)
 		local winsAward = survivalAwarded and 1 or 0
-		print(string.format("[QuestService] Dawn player=%s eligible=%s survived=%s wins=%d", player.Name, tostring(eligible), tostring(survivalAwarded), winsAward))
+		print(string.format("[QuestService] Dawn player=%s eligible=%s late=%s alive=%s survived=%s questCredit=%s wins=%d", player.Name, tostring(eligible), tostring(late), tostring(alive), tostring(survivalAwarded), tostring(completionAwarded), winsAward))
 
 		if totalCash > 0 then awardCash(player, totalCash) end
 		if winsAward > 0 then awardWins(player, 1) end
@@ -14074,7 +14185,7 @@ local function payoutNightRewards()
 
 		ShowNightSummary:FireClient(player, {
 			Survived = survivalAwarded,
-			QuestCompleted = questState.completed,
+			QuestCompleted = completionAwarded,
 			Distance = distance,
 			CashAwarded = totalCash,
 			XPAwarded = xpAward,
@@ -14086,7 +14197,7 @@ end
 local function updateDistanceTracking()
 	local cfg = RewardsConfig.Distance
 	for _, player in ipairs(Players:GetPlayers()) do
-		if isNightEligible(player) then
+		if isNightParticipant(player) then
 			local character = player.Character
 			local root = character and character:FindFirstChild("HumanoidRootPart")
 			if root then
@@ -14108,7 +14219,7 @@ local function getResolvedContractData(player)
 	if not contract then return nil end
 	local assignedRarity = getAssignedRarity()
 	local rarityData = RarityConfig.Rarities[assignedRarity] or RarityConfig.Rarities.Common
-	local threat = contract.Threat or (rarityData and rarityData.DefaultThreat) or 0
+	local threat = (questState.currentContract and questState.currentContract.Threat) or contract.Threat or (rarityData and rarityData.DefaultThreat) or 0
 	local accepted = player:GetAttribute("AcceptedContractId") == contract.Id and player:GetAttribute("AcceptedContractDay") == DayIndex.Value
 	return {
 		Id = contract.Id,
@@ -14158,6 +14269,9 @@ end
 ensureNpcPrompt(lastIsDayRef.value)
 for _, player in ipairs(Players:GetPlayers()) do registerDeathTracking(player) end
 if not lastIsDayRef.value then
+	if not questState.currentContract then
+		rollQuestAssignment()
+	end
 	local contract = getContractById(ActiveContractId.Value)
 	if contract then startNightlyQuest(contract) end
 end
@@ -14192,7 +14306,20 @@ Players.PlayerAdded:Connect(function(player)
 	questState.playerDied[player] = false
 	registerDeathTracking(player)
 	if not isDaytime(Lighting:GetMinutesAfterMidnight()) then
-		print("Late joiner (no credit): " .. player.Name)
+		questState.lateJoinerUserIds[player.UserId] = true
+		print("[Quest] Late joiner no-credit (except distance): " .. player.Name)
+		if questState.hudState.active then
+			NightHUDUpdate:FireClient(player, {
+				Type = "Start",
+				QuestId = questState.currentContract and questState.currentContract.QuestId or "",
+				QuestName = questState.hudState.questName,
+				Rarity = questState.hudState.rarity,
+				Current = questState.hudState.current,
+				Required = questState.hudState.required,
+				Percent = questState.hudState.percent,
+				Completed = questState.hudState.completed,
+			})
+		end
 	end
 end)
 
@@ -22447,7 +22574,176 @@ ShowNightSummary.OnClientEvent:Connect(showSummary)]]></ProtectedString>
 			</Properties>
 		</Item>
 	</Item>
-	<Item class="ScreenGui" referent="RBX27C7D36CB45A4487B58F28D9D4287121">
+	
+		<Item class="ScreenGui" referent="RBX9C9A8B3C1DFF4C3EA9E2F9B2A9A11234">
+			<Properties>
+				<bool name="ClipToDeviceSafeArea">true</bool>
+				<int name="DisplayOrder">45</int>
+				<token name="SafeAreaCompatibility">1</token>
+				<token name="ScreenInsets">2</token>
+				<bool name="Enabled">false</bool>
+				<bool name="ResetOnSpawn">false</bool>
+				<token name="ZIndexBehavior">1</token>
+				<bool name="AutoLocalize">true</bool>
+				<Ref name="RootLocalizationTable">null</Ref>
+				<token name="SelectionBehaviorDown">0</token>
+				<token name="SelectionBehaviorLeft">0</token>
+				<token name="SelectionBehaviorRight">0</token>
+				<token name="SelectionBehaviorUp">0</token>
+				<bool name="SelectionGroup">false</bool>
+				<BinaryString name="AttributesSerialize"></BinaryString>
+				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+				<bool name="DefinesCapabilities">false</bool>
+				<string name="Name">NightProgressHUD</string>
+				<int64 name="SourceAssetId">-1</int64>
+				<BinaryString name="Tags"></BinaryString>
+			</Properties>
+			<Item class="LocalScript" referent="RBX3E7218C9F8E54C11A667F4A4D29A5511">
+				<Properties>
+					<ProtectedString name="Source"><![CDATA[local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local QuestSystem = ReplicatedStorage:WaitForChild("QuestSystem")
+local Remotes = QuestSystem:WaitForChild("Remotes")
+local NightHUDUpdate = Remotes:WaitForChild("NightHUDUpdate")
+
+local gui = script.Parent
+local colors = {
+	Common = Color3.fromRGB(210, 210, 210),
+	Uncommon = Color3.fromRGB(126, 214, 125),
+	Rare = Color3.fromRGB(110, 165, 255),
+	Epic = Color3.fromRGB(170, 110, 255),
+	Legendary = Color3.fromRGB(255, 200, 110),
+}
+
+gui.ResetOnSpawn = false
+gui.Enabled = false
+
+local root = Instance.new("Frame")
+root.Name = "Main"
+root.AnchorPoint = Vector2.new(0.5, 0)
+root.Position = UDim2.fromScale(0.5, 0.03)
+root.Size = UDim2.fromScale(0.44, 0.12)
+root.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+root.BackgroundTransparency = 0.08
+root.BorderSizePixel = 0
+root.Parent = gui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 12)
+corner.Parent = root
+
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(120, 120, 120)
+stroke.Thickness = 1.5
+stroke.Transparency = 0.2
+stroke.Parent = root
+
+local sizeConstraint = Instance.new("UISizeConstraint")
+sizeConstraint.MinSize = Vector2.new(320, 72)
+sizeConstraint.MaxSize = Vector2.new(700, 130)
+sizeConstraint.Parent = root
+
+local title = Instance.new("TextLabel")
+title.Name = "TitleLabel"
+title.BackgroundTransparency = 1
+title.Position = UDim2.new(0, 14, 0, 6)
+title.Size = UDim2.new(1, -28, 0, 22)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 16
+title.TextColor3 = Color3.fromRGB(235, 235, 235)
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Text = "Night Quest"
+title.Parent = root
+
+local progressText = Instance.new("TextLabel")
+progressText.Name = "ProgressText"
+progressText.BackgroundTransparency = 1
+progressText.Position = UDim2.new(0, 14, 1, -26)
+progressText.Size = UDim2.new(1, -28, 0, 18)
+progressText.Font = Enum.Font.GothamSemibold
+progressText.TextSize = 14
+progressText.TextColor3 = Color3.fromRGB(220, 220, 220)
+progressText.TextXAlignment = Enum.TextXAlignment.Right
+progressText.Text = "0/0"
+progressText.Parent = root
+
+local bar = Instance.new("Frame")
+bar.Name = "ProgressBar"
+bar.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+bar.BorderSizePixel = 0
+bar.Position = UDim2.new(0, 14, 0, 34)
+bar.Size = UDim2.new(1, -28, 0, 16)
+bar.Parent = root
+
+local barCorner = Instance.new("UICorner")
+barCorner.CornerRadius = UDim.new(1, 0)
+barCorner.Parent = bar
+
+local fill = Instance.new("Frame")
+fill.Name = "Fill"
+fill.BackgroundColor3 = colors.Common
+fill.BorderSizePixel = 0
+fill.Size = UDim2.new(0, 0, 1, 0)
+fill.Parent = bar
+
+local fillCorner = Instance.new("UICorner")
+fillCorner.CornerRadius = UDim.new(1, 0)
+fillCorner.Parent = fill
+
+local function playOneShot(soundId)
+	local s = Instance.new("Sound")
+	s.SoundId = soundId
+	s.Volume = 0.8
+	s.Parent = gui
+	s:Play()
+	s.Ended:Connect(function() s:Destroy() end)
+end
+
+local function setState(data)
+	local rarity = data.Rarity or "Common"
+	title.Text = string.format("%s • %s", data.QuestName or "Night Quest", string.upper(rarity))
+	progressText.Text = string.format("%d/%d", math.floor(data.Current or 0), math.max(1, math.floor(data.Required or 1)))
+	local percent = math.clamp(data.Percent or 0, 0, 1)
+	TweenService:Create(fill, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(percent, 0, 1, 0)}):Play()
+	fill.BackgroundColor3 = colors[rarity] or colors.Common
+	stroke.Color = (colors[rarity] or colors.Common)
+end
+
+NightHUDUpdate.OnClientEvent:Connect(function(data)
+	if type(data) ~= "table" then return end
+	if data.Type == "Start" then
+		gui.Enabled = true
+		root.Visible = true
+		setState(data)
+		playOneShot("rbxassetid://115916891254154")
+	elseif data.Type == "Progress" then
+		if not gui.Enabled then gui.Enabled = true end
+		setState(data)
+	elseif data.Type == "End" then
+		if gui.Enabled then
+			playOneShot("rbxassetid://118805682366014")
+		end
+		gui.Enabled = false
+	elseif data.Type == "Complete" then
+		setState(data)
+	end
+end)
+]]></ProtectedString>
+					<bool name="Disabled">false</bool>
+					<Content name="LinkedSource"><null></null></Content>
+					<token name="RunContext">0</token>
+					<string name="ScriptGuid">{acfa1268-8ea7-4b2e-8dff-5cadf5fc4bf4}</string>
+					<BinaryString name="AttributesSerialize"></BinaryString>
+					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+					<bool name="DefinesCapabilities">false</bool>
+					<string name="Name">NightProgressController</string>
+					<int64 name="SourceAssetId">-1</int64>
+					<BinaryString name="Tags"></BinaryString>
+				</Properties>
+			</Item>
+		</Item>
+<Item class="ScreenGui" referent="RBX27C7D36CB45A4487B58F28D9D4287121">
 		<Properties>
 			<bool name="ClipToDeviceSafeArea">true</bool>
 			<int name="DisplayOrder">0</int>
@@ -25076,7 +25372,7 @@ ShowContractUI.OnClientEvent:Connect(function(data)
 
 	local threat = data.Threat or 0
 	threatFill.Size = UDim2.new(math.clamp(threat / 100, 0, 1), 0, 1, 0)
-	threatLabel.Text = string.format("THREAT: %s", RarityConfig.getThreatTier(threat))
+	threatLabel.Text = string.format("THREAT: %s %d", RarityConfig.getThreatTier(threat), math.floor(threat))
 	threatValue.Text = tostring(threat)
 
 	rewardsLabel.Text = string.format("Rewards: %d survival + %d completion + %.2f/stud", data.Rewards.Survival, data.Rewards.Completion, data.Rewards.Distance)
