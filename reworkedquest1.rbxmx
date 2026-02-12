@@ -37885,7 +37885,7 @@ local function firePlayerCard(open: boolean, tabName: string?)
 	return true
 end
 
-function setPlayerCardOpen(open: boolean, tabName: string?)
+setPlayerCardOpen = function(open: boolean, tabName: string?)
 	if firePlayerCard(open, tabName) then
 		return
 	end
