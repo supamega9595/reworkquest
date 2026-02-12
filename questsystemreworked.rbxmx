@@ -13306,6 +13306,7 @@ questState = {
 	lateJoinerUserIds = {},
 	currentContract = nil,
 	hudState = { active = false, completed = false, questName = "", rarity = "Common", current = 0, required = 1, percent = 0 },
+	nightDayIndex = 0,
 }
 
 local function clearQuestConnections()
@@ -13411,6 +13412,25 @@ end
 
 local function isNightParticipant(player)
 	return isNightEligible(player) or questState.lateJoinerUserIds[player.UserId] == true
+end
+
+local function getPlayerJoinMeta(player)
+	local joinedDayIndex = player:GetAttribute("QuestJoinDayIndex")
+	local joinedDuringNight = player:GetAttribute("QuestJoinedDuringNight")
+	if type(joinedDayIndex) ~= "number" then
+		joinedDayIndex = DayIndex.Value
+		player:SetAttribute("QuestJoinDayIndex", joinedDayIndex)
+	end
+	if type(joinedDuringNight) ~= "boolean" then
+		joinedDuringNight = not isDaytime(Lighting:GetMinutesAfterMidnight())
+		player:SetAttribute("QuestJoinedDuringNight", joinedDuringNight)
+	end
+	return joinedDayIndex, joinedDuringNight
+end
+
+local function joinedDuringActiveNight(player)
+	local joinedDayIndex, joinedDuringNight = getPlayerJoinMeta(player)
+	return joinedDuringNight and joinedDayIndex == questState.nightDayIndex
 end
 
 local function broadcastNightHUD(payload)
@@ -14047,8 +14067,10 @@ local function startNightlyQuest(contract)
 	questState.playerLastPositions = {}
 	questState.nightEligibleUserIds = {}
 	questState.lateJoinerUserIds = {}
+	questState.nightDayIndex = DayIndex.Value
 	for _, player in ipairs(Players:GetPlayers()) do
 		questState.playerDied[player] = false
+		getPlayerJoinMeta(player)
 		questState.nightEligibleUserIds[player.UserId] = true
 	end
 	local sampleEligible = {}
@@ -14161,11 +14183,13 @@ local function payoutNightRewards()
 	for _, player in ipairs(Players:GetPlayers()) do
 		local eligible = isNightEligible(player)
 		local late = questState.lateJoinerUserIds[player.UserId] == true
+		local joinedMidNight = joinedDuringActiveNight(player)
 		local alive = isPlayerAlive(player)
-		local distanceEligible = eligible or late
+		local distanceEligible = eligible or late or joinedMidNight
 		local distance = distanceEligible and (questState.playerDistances[player] or 0) or 0
-		local completionAwarded = eligible and questState.completed
-		local survivalAwarded = eligible and alive
+		local questCreditEligible = eligible and (not late) and (not joinedMidNight)
+		local completionAwarded = questCreditEligible and questState.completed
+		local survivalAwarded = questCreditEligible and alive
 		local baseSurvivalCash = survivalAwarded and RewardsConfig.SurvivalCashBase or 0
 		local baseCompletionCash = completionAwarded and RewardsConfig.QuestCompleteCash or 0
 		local distanceCash = eligible and calculateDistanceCash(distance) or 0
@@ -14177,7 +14201,7 @@ local function payoutNightRewards()
 		local distanceXP = distanceEligible and (distance * (xpConfig.DistancePerStud or 0)) or 0
 		local xpAward = math.floor(((baseSurvivalXP + baseCompletionXP) * rarityMultiplier) + distanceXP)
 		local winsAward = survivalAwarded and 1 or 0
-		print(string.format("[QuestService] Dawn player=%s eligible=%s late=%s alive=%s survived=%s questCredit=%s wins=%d", player.Name, tostring(eligible), tostring(late), tostring(alive), tostring(survivalAwarded), tostring(completionAwarded), winsAward))
+		print(string.format("[QuestService] Dawn player=%s eligible=%s late=%s joinedMidNight=%s alive=%s survived=%s questCredit=%s wins=%d", player.Name, tostring(eligible), tostring(late), tostring(joinedMidNight), tostring(alive), tostring(survivalAwarded), tostring(completionAwarded), winsAward))
 
 		if totalCash > 0 then awardCash(player, totalCash) end
 		if winsAward > 0 then awardWins(player, 1) end
@@ -14267,7 +14291,15 @@ if lastIsDayRef.value then
 end
 
 ensureNpcPrompt(lastIsDayRef.value)
-for _, player in ipairs(Players:GetPlayers()) do registerDeathTracking(player) end
+for _, player in ipairs(Players:GetPlayers()) do
+	if player:GetAttribute("QuestJoinDayIndex") == nil then
+		player:SetAttribute("QuestJoinDayIndex", DayIndex.Value)
+	end
+	if player:GetAttribute("QuestJoinedDuringNight") == nil then
+		player:SetAttribute("QuestJoinedDuringNight", not isDaytime(Lighting:GetMinutesAfterMidnight()))
+	end
+	registerDeathTracking(player)
+end
 if not lastIsDayRef.value then
 	if not questState.currentContract then
 		rollQuestAssignment()
@@ -14304,6 +14336,8 @@ Players.PlayerAdded:Connect(function(player)
 	questState.playerDistances[player] = 0
 	questState.playerLastPositions[player] = nil
 	questState.playerDied[player] = false
+	player:SetAttribute("QuestJoinDayIndex", DayIndex.Value)
+	player:SetAttribute("QuestJoinedDuringNight", not isDaytime(Lighting:GetMinutesAfterMidnight()))
 	registerDeathTracking(player)
 	if not isDaytime(Lighting:GetMinutesAfterMidnight()) then
 		questState.lateJoinerUserIds[player.UserId] = true
