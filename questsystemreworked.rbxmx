@@ -13726,11 +13726,24 @@ local function selectRandomPages(requiredCount)
 			table.insert(pages, page)
 		end
 	end
+	local desired = requiredCount or QuestSettings.Pages.PagesToSpawn or 8
+	if desired > #pages and #pages > 0 then
+		local deficit = desired - #pages
+		for i = 1, deficit do
+			local source = pages[math.random(1, #pages)]
+			local clone = source:Clone()
+			clone.Name = string.format("%s_Extra%d", source.Name, i)
+			clone.Parent = folder
+			table.insert(pages, clone)
+		end
+		print(string.format("[QuestService] Expanded runtime pages from %d to %d for rarity target", desired - deficit, #pages))
+	end
+
 	for i = #pages, 2, -1 do
 		local j = math.random(1, i)
 		pages[i], pages[j] = pages[j], pages[i]
 	end
-	local desired = requiredCount or QuestSettings.Pages.PagesToSpawn or 8
+
 	local count = math.min(desired, #pages)
 	if desired > #pages then
 		warn(string.format("[QuestService] Pages desired=%d but only found %d runtime pages", desired, #pages))
@@ -14268,7 +14281,7 @@ local function payoutNightRewards()
 		local joinedMidNight = joinedDuringActiveNight(player)
 		local _, _, joinTimestamp = getPlayerJoinMeta(player)
 		local joinedAfterNightStart = (type(joinTimestamp) == "number") and (joinTimestamp > (questState.nightStartTimestamp or 0))
-		local joinedLate = late or joinedMidNight or joinedAfterNightStart or (not eligible)
+		local joinedLate = late or joinedMidNight or joinedAfterNightStart or (player:GetAttribute("QuestJoinedDuringNight") == true) or (not eligible)
 		local alive = isPlayerAlive(player)
 		local distanceEligible = eligible or late or joinedMidNight
 		local distance = distanceEligible and (questState.playerDistances[player] or 0) or 0
