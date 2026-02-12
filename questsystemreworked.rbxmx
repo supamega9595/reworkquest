@@ -13367,6 +13367,7 @@ questState = {
 	currentContract = nil,
 	hudState = { active = false, completed = false, questName = "", rarity = "Common", current = 0, required = 1, percent = 0 },
 	nightDayIndex = 0,
+	nightStartTimestamp = 0,
 }
 
 local function clearQuestConnections()
@@ -13474,6 +13475,7 @@ end
 local function getPlayerJoinMeta(player)
 	local joinedDayIndex = player:GetAttribute("QuestJoinDayIndex")
 	local joinedDuringNight = player:GetAttribute("QuestJoinedDuringNight")
+	local joinTimestamp = player:GetAttribute("QuestJoinTimestamp")
 	if type(joinedDayIndex) ~= "number" then
 		joinedDayIndex = DayIndex.Value
 		player:SetAttribute("QuestJoinDayIndex", joinedDayIndex)
@@ -13482,7 +13484,11 @@ local function getPlayerJoinMeta(player)
 		joinedDuringNight = not isDaytime(Lighting:GetMinutesAfterMidnight())
 		player:SetAttribute("QuestJoinedDuringNight", joinedDuringNight)
 	end
-	return joinedDayIndex, joinedDuringNight
+	if type(joinTimestamp) ~= "number" then
+		joinTimestamp = os.time()
+		player:SetAttribute("QuestJoinTimestamp", joinTimestamp)
+	end
+	return joinedDayIndex, joinedDuringNight, joinTimestamp
 end
 
 local function joinedDuringActiveNight(player)
@@ -14143,6 +14149,7 @@ local function startNightlyQuest(contract)
 	questState.nightEligibleUserIds = {}
 	questState.lateJoinerUserIds = {}
 	questState.nightDayIndex = DayIndex.Value
+	questState.nightStartTimestamp = os.time()
 	for _, player in ipairs(Players:GetPlayers()) do
 		questState.playerDied[player] = false
 		getPlayerJoinMeta(player)
@@ -14259,7 +14266,9 @@ local function payoutNightRewards()
 		local eligible = isNightEligible(player)
 		local late = questState.lateJoinerUserIds[player.UserId] == true
 		local joinedMidNight = joinedDuringActiveNight(player)
-		local joinedLate = late or joinedMidNight or (not eligible)
+		local _, _, joinTimestamp = getPlayerJoinMeta(player)
+		local joinedAfterNightStart = (type(joinTimestamp) == "number") and (joinTimestamp > (questState.nightStartTimestamp or 0))
+		local joinedLate = late or joinedMidNight or joinedAfterNightStart or (not eligible)
 		local alive = isPlayerAlive(player)
 		local distanceEligible = eligible or late or joinedMidNight
 		local distance = distanceEligible and (questState.playerDistances[player] or 0) or 0
@@ -14277,7 +14286,7 @@ local function payoutNightRewards()
 		local distanceXP = distanceEligible and (distance * (xpConfig.DistancePerStud or 0)) or 0
 		local xpAward = math.floor(((baseSurvivalXP + baseCompletionXP) * rarityMultiplier) + distanceXP)
 		local winsAward = survivalAwarded and 1 or 0
-		print(string.format("[QuestService] Dawn player=%s eligible=%s late=%s joinedMidNight=%s alive=%s survived=%s questCredit=%s wins=%d", player.Name, tostring(eligible), tostring(late), tostring(joinedMidNight), tostring(alive), tostring(survivalAwarded), tostring(completionAwarded), winsAward))
+		print(string.format("[QuestService] Dawn player=%s eligible=%s late=%s joinedMidNight=%s alive=%s survived=%s questCredit=%s wins=%d joinedLate=%s", player.Name, tostring(eligible), tostring(late), tostring(joinedMidNight), tostring(alive), tostring(survivalAwarded), tostring(completionAwarded), winsAward, tostring(joinedLate)))
 
 		if totalCash > 0 then awardCash(player, totalCash) end
 		if winsAward > 0 then awardWins(player, 1) end
@@ -14360,11 +14369,7 @@ end
 local lastIsDayRef = { value = isDaytime(Lighting:GetMinutesAfterMidnight()) }
 if lastIsDayRef.value then
 	DayIndex.Value = math.max(DayIndex.Value, 1)
-	if ActiveContractId.Value == "" then
-		rollNewContract()
-	elseif ActiveContractRarity.Value == "" then
-		ActiveContractRarity.Value = "Common"
-	end
+	rollNewContract()
 end
 
 ensureNpcPrompt(lastIsDayRef.value)
@@ -14374,6 +14379,10 @@ for _, player in ipairs(Players:GetPlayers()) do
 	end
 	if player:GetAttribute("QuestJoinedDuringNight") == nil then
 		player:SetAttribute("QuestJoinedDuringNight", not isDaytime(Lighting:GetMinutesAfterMidnight()))
+	player:SetAttribute("QuestJoinTimestamp", os.time())
+	end
+	if player:GetAttribute("QuestJoinTimestamp") == nil then
+		player:SetAttribute("QuestJoinTimestamp", os.time())
 	end
 	registerDeathTracking(player)
 end
@@ -14396,6 +14405,9 @@ task.spawn(function()
 				payoutNightRewards()
 				stopNightlyQuest(true)
 			else
+				if not questState.currentContract then
+					rollNewContract()
+				end
 				local contract = getContractById(ActiveContractId.Value)
 				if contract then startNightlyQuest(contract) end
 				updatePromptStyle(false)
@@ -14415,6 +14427,7 @@ Players.PlayerAdded:Connect(function(player)
 	questState.playerDied[player] = false
 	player:SetAttribute("QuestJoinDayIndex", DayIndex.Value)
 	player:SetAttribute("QuestJoinedDuringNight", not isDaytime(Lighting:GetMinutesAfterMidnight()))
+	player:SetAttribute("QuestJoinTimestamp", os.time())
 	registerDeathTracking(player)
 	if not isDaytime(Lighting:GetMinutesAfterMidnight()) then
 		questState.lateJoinerUserIds[player.UserId] = true
@@ -22383,8 +22396,9 @@ local function buildUi()
 	lateJoinWarning.Size = UDim2.new(0.62, 0, 0, 28)
 	lateJoinWarning.Font = Enum.Font.GothamBold
 	lateJoinWarning.Text = "Joined late - only distance credit"
-	lateJoinWarning.TextColor3 = Color3.fromRGB(255, 95, 95)
-	lateJoinWarning.TextSize = 18
+	lateJoinWarning.TextColor3 = Color3.fromRGB(255, 120, 120)
+	lateJoinWarning.TextSize = 19
+	lateJoinWarning.TextTransparency = 0
 	lateJoinWarning.TextXAlignment = Enum.TextXAlignment.Left
 	lateJoinWarning.TextYAlignment = Enum.TextYAlignment.Center
 	lateJoinWarning.Visible = false
@@ -22399,6 +22413,12 @@ local function buildUi()
 	lateWarningPadding.PaddingLeft = UDim.new(0, 10)
 	lateWarningPadding.PaddingRight = UDim.new(0, 8)
 	lateWarningPadding.Parent = lateJoinWarning
+
+	local lateWarningStroke = Instance.new("UIStroke")
+	lateWarningStroke.Color = Color3.fromRGB(255, 70, 70)
+	lateWarningStroke.Thickness = 1
+	lateWarningStroke.Transparency = 0.15
+	lateWarningStroke.Parent = lateJoinWarning
 
 	UI.StatusLabel = statusLabel
 	UI.CountdownLabel = countdownLabel
