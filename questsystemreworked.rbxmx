@@ -13709,7 +13709,7 @@ local function resetAllPages()
 	questState.activePages = {}
 end
 
-local function selectRandomPages()
+local function selectRandomPages(requiredCount)
 	local folder = getQuestPagesFolder()
 	if not folder then
 		return {}
@@ -13724,7 +13724,11 @@ local function selectRandomPages()
 		local j = math.random(1, i)
 		pages[i], pages[j] = pages[j], pages[i]
 	end
-	local count = math.min(QuestSettings.Pages.PagesToSpawn or 8, #pages)
+	local desired = requiredCount or QuestSettings.Pages.PagesToSpawn or 8
+	local count = math.min(desired, #pages)
+	if desired > #pages then
+		warn(string.format("[QuestService] Pages desired=%d but only found %d runtime pages", desired, #pages))
+	end
 	local selection = {}
 	for i = 1, count do
 		table.insert(selection, pages[i])
@@ -13737,7 +13741,7 @@ local function activatePageQuest()
 	if isDaytime(Lighting:GetMinutesAfterMidnight()) then
 		return
 	end
-	local selection = selectRandomPages()
+	local selection = selectRandomPages(questState.target)
 	for _, page in ipairs(selection) do
 		setPageActive(page, true)
 		applyQuestPickupTag(page)
@@ -14255,7 +14259,7 @@ local function payoutNightRewards()
 		local eligible = isNightEligible(player)
 		local late = questState.lateJoinerUserIds[player.UserId] == true
 		local joinedMidNight = joinedDuringActiveNight(player)
-		local joinedLate = late or joinedMidNight or ((player:GetAttribute("QuestJoinedDuringNight") == true) and not eligible)
+		local joinedLate = late or joinedMidNight or (not eligible)
 		local alive = isPlayerAlive(player)
 		local distanceEligible = eligible or late or joinedMidNight
 		local distance = distanceEligible and (questState.playerDistances[player] or 0) or 0
@@ -22345,12 +22349,6 @@ local function buildUi()
 	subtitle.TextTransparency = 0.15
 	subtitle.ZIndex = 5
 
-	local lateJoinWarning = createText(content, "LateJoinWarning", "Joined late - only distance credit", 20, Enum.FontWeight.Bold, Color3.fromRGB(235, 80, 80), Enum.TextXAlignment.Left)
-	lateJoinWarning.Font = Enum.Font.GothamBold
-	lateJoinWarning.Size = UDim2.new(1, 0, 0, 24)
-	lateJoinWarning.Visible = false
-	lateJoinWarning.ZIndex = 7
-	UI.LateJoinWarning = lateJoinWarning
 
 	local statusStack = Instance.new("Frame")
 	statusStack.Name = "StatusStack"
@@ -22375,8 +22373,36 @@ local function buildUi()
 	local countdownLabel = createText(statusStack, "CountdownLabel", "Closing in 04s", 16, Enum.FontWeight.Bold, COLORS.Text, Enum.TextXAlignment.Right)
 	countdownLabel.Size = UDim2.new(1, 0, 0, 22)
 	countdownLabel.ZIndex = 9
+
+	local lateJoinWarning = Instance.new("TextLabel")
+	lateJoinWarning.Name = "LateJoinWarning"
+	lateJoinWarning.BackgroundColor3 = Color3.fromRGB(68, 18, 18)
+	lateJoinWarning.BackgroundTransparency = 0.18
+	lateJoinWarning.BorderSizePixel = 0
+	lateJoinWarning.Position = UDim2.new(0, UI_CONFIG.PanelPadding.Left, 0, UI_CONFIG.PanelPadding.Top + UI_CONFIG.TitleHeight + UI_CONFIG.SubtitleHeight + 2)
+	lateJoinWarning.Size = UDim2.new(0.62, 0, 0, 28)
+	lateJoinWarning.Font = Enum.Font.GothamBold
+	lateJoinWarning.Text = "Joined late - only distance credit"
+	lateJoinWarning.TextColor3 = Color3.fromRGB(255, 95, 95)
+	lateJoinWarning.TextSize = 18
+	lateJoinWarning.TextXAlignment = Enum.TextXAlignment.Left
+	lateJoinWarning.TextYAlignment = Enum.TextYAlignment.Center
+	lateJoinWarning.Visible = false
+	lateJoinWarning.ZIndex = 10
+	lateJoinWarning.Parent = panel
+
+	local lateWarningCorner = Instance.new("UICorner")
+	lateWarningCorner.CornerRadius = UDim.new(0, 8)
+	lateWarningCorner.Parent = lateJoinWarning
+
+	local lateWarningPadding = Instance.new("UIPadding")
+	lateWarningPadding.PaddingLeft = UDim.new(0, 10)
+	lateWarningPadding.PaddingRight = UDim.new(0, 8)
+	lateWarningPadding.Parent = lateJoinWarning
+
 	UI.StatusLabel = statusLabel
 	UI.CountdownLabel = countdownLabel
+	UI.LateJoinWarning = lateJoinWarning
 
 	local outcomeContainer = Instance.new("Frame")
 	outcomeContainer.Name = "OutcomeContainer"
