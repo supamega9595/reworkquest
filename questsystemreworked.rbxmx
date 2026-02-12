@@ -13842,6 +13842,14 @@ questHandlers.SharedCollectCount = {
 
 
 
+local CaptureRaritySettings = {
+	Common = { RequiredSeconds = 200, DecayPercent = 0.35, ReverseChance = 0.06, BurstChance = 0.35, BurstDurationMin = 4, BurstDurationMax = 8, WaypointPauseSeconds = 3.0 },
+	Uncommon = { RequiredSeconds = 240, DecayPercent = 0.50, ReverseChance = 0.10, BurstChance = 0.50, BurstDurationMin = 5, BurstDurationMax = 15, WaypointPauseSeconds = 2.5 },
+	Rare = { RequiredSeconds = 280, DecayPercent = 0.65, ReverseChance = 0.14, BurstChance = 0.60, BurstDurationMin = 6, BurstDurationMax = 16, WaypointPauseSeconds = 2.0 },
+	Epic = { RequiredSeconds = 330, DecayPercent = 0.80, ReverseChance = 0.18, BurstChance = 0.70, BurstDurationMin = 7, BurstDurationMax = 18, WaypointPauseSeconds = 1.5 },
+	Legendary = { RequiredSeconds = 390, DecayPercent = 0.95, ReverseChance = 0.22, BurstChance = 0.80, BurstDurationMin = 8, BurstDurationMax = 20, WaypointPauseSeconds = 1.0 },
+}
+
 questHandlers.CaptureQuest = {
 	start = function(contract)
 		local captureRoot = questState.runtimeQuestRoot
@@ -13888,21 +13896,24 @@ questHandlers.CaptureQuest = {
 		end
 
 		local settings = contract.Settings or {}
+		local rarity = contract.Rarity or getAssignedRarity()
+		local raritySettings = CaptureRaritySettings[rarity] or CaptureRaritySettings.Uncommon
 		local baseSpeed = settings.BaseSpeed or 14
 		local burstMultiplier = settings.BurstMultiplier or 2
 		local accelerationTime = settings.AccelTime or 1.25
 		local decelerationTime = settings.DecelTime or 1.25
-		local waypointPauseSeconds = settings.WaypointPauseSeconds or 3
-		local reverseChance = settings.ReverseChance or 0.10
+		local waypointPauseSeconds = raritySettings.WaypointPauseSeconds
+		local reverseChance = raritySettings.ReverseChance
 		local burstCheckInterval = settings.BurstCheckInterval or 20
-		local burstChance = settings.BurstChance or 0.50
-		local burstDurationMin = settings.BurstDurationMin or 5
-		local burstDurationMax = settings.BurstDurationMax or 15
+		local burstChance = raritySettings.BurstChance
+		local burstDurationMin = raritySettings.BurstDurationMin
+		local burstDurationMax = raritySettings.BurstDurationMax
 		local gainRate = settings.GainRate or 1
-		local decayPercent = settings.DecayPercent or 0.50
+		local decayPercent = raritySettings.DecayPercent
 		local progressTick = settings.ProgressTickInterval or 0.25
-		local required = settings.RequiredProgressBase or 240
+		local required = raritySettings.RequiredSeconds
 		local rotationBaseDeg = settings.BaseRotationDegPerSecond or 20
+		print(string.format("[CaptureQuest] Rarity=%s Required=%d Decay=%.2f Reverse=%.2f Burst=%.2f Pause=%.1f", rarity, required, decayPercent, reverseChance, burstChance, waypointPauseSeconds))
 
 		questState.target = required
 		questState.progress = 0
@@ -14184,6 +14195,7 @@ local function payoutNightRewards()
 		local eligible = isNightEligible(player)
 		local late = questState.lateJoinerUserIds[player.UserId] == true
 		local joinedMidNight = joinedDuringActiveNight(player)
+		local joinedLate = late or joinedMidNight
 		local alive = isPlayerAlive(player)
 		local distanceEligible = eligible or late or joinedMidNight
 		local distance = distanceEligible and (questState.playerDistances[player] or 0) or 0
@@ -14214,6 +14226,7 @@ local function payoutNightRewards()
 			CashAwarded = totalCash,
 			XPAwarded = xpAward,
 			WinsAwarded = winsAward,
+			JoinedLate = joinedLate,
 		})
 	end
 end
@@ -22295,6 +22308,12 @@ local function buildUi()
 	local countdownLabel = createText(statusStack, "CountdownLabel", "Closing in 04s", 16, Enum.FontWeight.Bold, COLORS.Text, Enum.TextXAlignment.Right)
 	countdownLabel.Size = UDim2.new(1, 0, 0, 22)
 	countdownLabel.ZIndex = 9
+	local lateJoinWarning = createText(statusStack, "LateJoinWarning", "Joined late - only distance credit", 18, Enum.FontWeight.Bold, Color3.fromRGB(235, 80, 80), Enum.TextXAlignment.Right)
+	lateJoinWarning.Font = Enum.Font.GothamBold
+	lateJoinWarning.Size = UDim2.new(1, 0, 0, 22)
+	lateJoinWarning.Visible = false
+	lateJoinWarning.ZIndex = 9
+	UI.LateJoinWarning = lateJoinWarning
 	UI.StatusLabel = statusLabel
 	UI.CountdownLabel = countdownLabel
 
@@ -22538,6 +22557,10 @@ local function showSummary(data)
 	local cashEarned = data and (data.CashEarned or data.CashAwarded) or 0
 	local xpEarned = data and (data.XPEarned or data.XPAwarded) or 0
 	local winsEarned = data and (data.WinsEarned or data.WinsAwarded) or 0
+	local joinedLate = data and data.JoinedLate == true
+	if UI.LateJoinWarning then
+		UI.LateJoinWarning.Visible = joinedLate
+	end
 
 	UI.SurvivedValue.Text = survived and "YES" or "NO"
 	UI.SurvivedValue.TextColor3 = Color3.fromRGB(245, 245, 245)
