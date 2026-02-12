@@ -41301,7 +41301,7 @@ print("🛒 Shop purchase handler initialized")]]></ProtectedString>
 	<Item class="Script" referent="RBX676935ECF0A64E6B94E68A75B8ED63AF">
 		<Properties>
 			<ProtectedString name="Source"><![CDATA[--// TitlesService.server.lua
---// ServerScriptService - handles title equip requests
+--// ServerScriptService - handles title equip requests + PlayerCard snapshots
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -41354,6 +41354,7 @@ local LevelConfig = StatsConfig.Levels or {}
 local leaderConfig = LevelConfig.Leaderstats or {}
 local XP_PER_LEVEL = LevelConfig.XPPerLevel or 1000
 local LEADERSTAT_XP_NAME = leaderConfig.XP or "XP"
+local LEADERSTAT_PLAYTIME_NAME = leaderConfig.PlaytimeSeconds or "PlaytimeSeconds"
 
 local TitlesConfig = loadTitlesConfig()
 local titlesStore = DataStoreService:GetDataStore("PlayerEquippedTitles_v1")
@@ -41370,37 +41371,169 @@ local function computeLevel(totalXP: number): number
 	return math.floor(totalXP / XP_PER_LEVEL) + 1
 end
 
-local function getPlayerXP(player: Player): number
+local function getLeaderInt(player: Player, name: string): number?
 	local leaderstats = player:FindFirstChild("leaderstats")
 	if not leaderstats then
-		return 0
+		return nil
 	end
-	local xpValue = leaderstats:FindFirstChild(LEADERSTAT_XP_NAME)
-	if xpValue and xpValue:IsA("IntValue") then
-		return xpValue.Value
+	local value = leaderstats:FindFirstChild(name)
+	if value and value:IsA("IntValue") then
+		return value.Value
 	end
-	return 0
+	return nil
+end
+
+local function getPlayerXP(player: Player): number
+	return getLeaderInt(player, LEADERSTAT_XP_NAME) or 0
+end
+
+local function hasBoolInFolder(player: Player, folderName: string, key: string): boolean?
+	local folder = player:FindFirstChild(folderName)
+	if not folder then
+		return nil
+	end
+	local value = folder:FindFirstChild(key)
+	if value and value:IsA("BoolValue") then
+		return value.Value
+	end
+	return nil
+end
+
+local function getCollectedCollectable(player: Player, id: string): boolean
+	local attr = player:GetAttribute("Collectable_" .. id)
+	if typeof(attr) == "boolean" then
+		return attr
+	end
+	local folderValue = hasBoolInFolder(player, "Collectables", id)
+	if typeof(folderValue) == "boolean" then
+		return folderValue
+	end
+	return false
+end
+
+local function getUnlockedTitle(player: Player, id: string): boolean
+	local attr = player:GetAttribute("Title_" .. id)
+	if typeof(attr) == "boolean" then
+		return attr
+	end
+	local folderValue = hasBoolInFolder(player, "Titles", id)
+	if typeof(folderValue) == "boolean" then
+		return folderValue
+	end
+
+	local title = titlesById[id]
+	if not title then
+		return false
+	end
+	local required = tonumber(title.RequiredLevel) or 0
+	return computeLevel(getPlayerXP(player)) >= required
 end
 
 local function ensureRemotes()
-	local remotes = ReplicatedStorage:FindFirstChild("TitlesRemotes")
-	if not remotes then
-		remotes = Instance.new("Folder")
-		remotes.Name = "TitlesRemotes"
-		remotes.Parent = ReplicatedStorage
+	local titlesRemotes = ReplicatedStorage:FindFirstChild("TitlesRemotes")
+	if not titlesRemotes then
+		titlesRemotes = Instance.new("Folder")
+		titlesRemotes.Name = "TitlesRemotes"
+		titlesRemotes.Parent = ReplicatedStorage
 	end
 
-	local equipEvent = remotes:FindFirstChild("EquipTitle")
+	local equipEvent = titlesRemotes:FindFirstChild("EquipTitle")
 	if not equipEvent then
 		equipEvent = Instance.new("RemoteEvent")
 		equipEvent.Name = "EquipTitle"
-		equipEvent.Parent = remotes
+		equipEvent.Parent = titlesRemotes
 	end
 
-	return equipEvent
+	local playerCardRemotes = ReplicatedStorage:FindFirstChild("PlayerCardRemotes")
+	if not playerCardRemotes then
+		playerCardRemotes = Instance.new("Folder")
+		playerCardRemotes.Name = "PlayerCardRemotes"
+		playerCardRemotes.Parent = ReplicatedStorage
+	end
+
+	local requestSnapshot = playerCardRemotes:FindFirstChild("RequestSnapshot")
+	if not requestSnapshot then
+		requestSnapshot = Instance.new("RemoteFunction")
+		requestSnapshot.Name = "RequestSnapshot"
+		requestSnapshot.Parent = playerCardRemotes
+	end
+
+	local snapshotUpdated = playerCardRemotes:FindFirstChild("SnapshotUpdated")
+	if not snapshotUpdated then
+		snapshotUpdated = Instance.new("RemoteEvent")
+		snapshotUpdated.Name = "SnapshotUpdated"
+		snapshotUpdated.Parent = playerCardRemotes
+	end
+
+	return equipEvent, requestSnapshot, snapshotUpdated
 end
 
-local equipEvent = ensureRemotes()
+local equipEvent, requestSnapshotRF, snapshotUpdatedRE = ensureRemotes()
+
+local function buildPlayerCardSnapshot(player: Player)
+	local xp = getPlayerXP(player)
+	local level = computeLevel(xp)
+	local inLevel = xp % XP_PER_LEVEL
+	local playtime = getLeaderInt(player, LEADERSTAT_PLAYTIME_NAME) or 0
+
+	local collectablesById = {}
+	local collectablesOwned = 0
+	local collectablesCatalog = ReplicatedStorage:FindFirstChild("CollectablesCatalog")
+	if collectablesCatalog then
+		for _, entry in ipairs(collectablesCatalog:GetChildren()) do
+			local id = entry.Name
+			local owned = getCollectedCollectable(player, id)
+			collectablesById[id] = owned
+			if owned then
+				collectablesOwned += 1
+			end
+		end
+	end
+
+	local titlesByIdSnapshot = {}
+	local titlesUnlocked = 0
+	for _, title in ipairs(TitlesConfig.Titles or {}) do
+		if title and title.Id then
+			local unlocked = getUnlockedTitle(player, title.Id)
+			titlesByIdSnapshot[title.Id] = unlocked
+			if unlocked then
+				titlesUnlocked += 1
+			end
+		end
+	end
+
+	local equippedTitle = player:GetAttribute("EquippedTitle")
+	if typeof(equippedTitle) ~= "string" then
+		equippedTitle = ""
+	end
+
+	return {
+		version = 1,
+		stats = {
+			xp = xp,
+			playtimeSeconds = playtime,
+			level = level,
+			inLevelXP = inLevel,
+			xpPerLevel = XP_PER_LEVEL,
+		},
+		progress = {
+			collectablesOwned = collectablesOwned,
+			collectablesTotal = collectablesCatalog and #collectablesCatalog:GetChildren() or 0,
+			titlesUnlocked = titlesUnlocked,
+			titlesTotal = #(TitlesConfig.Titles or {}),
+		},
+		collectablesById = collectablesById,
+		titlesById = titlesByIdSnapshot,
+		equippedTitle = equippedTitle,
+	}
+end
+
+local function sendSnapshot(player: Player)
+	if not player.Parent then
+		return
+	end
+	snapshotUpdatedRE:FireClient(player, buildPlayerCardSnapshot(player))
+end
 
 local function loadEquippedTitle(player: Player)
 	local ok, saved = pcall(function()
@@ -41427,8 +41560,51 @@ local function saveEquippedTitle(player: Player, titleId: string)
 	end
 end
 
+requestSnapshotRF.OnServerInvoke = function(player: Player)
+	return buildPlayerCardSnapshot(player)
+end
+
 Players.PlayerAdded:Connect(function(player: Player)
 	loadEquippedTitle(player)
+	task.defer(function()
+		sendSnapshot(player)
+	end)
+
+	player.AttributeChanged:Connect(function(attr)
+		if attr == "EquippedTitle" or string.sub(attr, 1, #"Collectable_") == "Collectable_" or string.sub(attr, 1, #"Title_") == "Title_" then
+			sendSnapshot(player)
+		end
+	end)
+
+	local function watchLeaderstats(ls: Instance)
+		for _, statName in ipairs({ LEADERSTAT_XP_NAME, LEADERSTAT_PLAYTIME_NAME }) do
+			local stat = ls:FindFirstChild(statName)
+			if stat and stat:IsA("IntValue") then
+				stat.Changed:Connect(function()
+					sendSnapshot(player)
+				end)
+			end
+		end
+		ls.ChildAdded:Connect(function(child)
+			if child:IsA("IntValue") and (child.Name == LEADERSTAT_XP_NAME or child.Name == LEADERSTAT_PLAYTIME_NAME) then
+				child.Changed:Connect(function()
+					sendSnapshot(player)
+				end)
+			end
+		end)
+	end
+
+	local leaderstats = player:FindFirstChild("leaderstats")
+	if leaderstats then
+		watchLeaderstats(leaderstats)
+	end
+
+	player.ChildAdded:Connect(function(child)
+		if child.Name == "leaderstats" then
+			watchLeaderstats(child)
+			sendSnapshot(player)
+		end
+	end)
 end)
 
 equipEvent.OnServerEvent:Connect(function(player: Player, titleId: string)
@@ -41439,6 +41615,7 @@ equipEvent.OnServerEvent:Connect(function(player: Player, titleId: string)
 	if titleId == "" then
 		player:SetAttribute("EquippedTitle", "")
 		saveEquippedTitle(player, "")
+		sendSnapshot(player)
 		return
 	end
 
@@ -41458,9 +41635,10 @@ equipEvent.OnServerEvent:Connect(function(player: Player, titleId: string)
 
 	player:SetAttribute("EquippedTitle", titleId)
 	saveEquippedTitle(player, titleId)
+	sendSnapshot(player)
 end)
 
-print("[TitlesService] Titles equip service running.")
+print("[TitlesService] Titles equip + PlayerCard snapshot service running.")
 ]]></ProtectedString>
 			<bool name="Disabled">false</bool>
 			<Content name="LinkedSource"><null></null></Content>
@@ -48182,10 +48360,25 @@ local function formatPanelText(text, fallback, name)
 end
 
 --//////////////////////////////////////////////////////////
--- TITLES REMOTES
+-- REMOTES
 --//////////////////////////////////////////////////////////
 local titlesRemotes = ReplicatedStorage:WaitForChild("TitlesRemotes", 5)
 local titlesEquipEvent = titlesRemotes and titlesRemotes:FindFirstChild("EquipTitle")
+
+local playerCardRemotes = ReplicatedStorage:FindFirstChild("PlayerCardRemotes") or ReplicatedStorage:WaitForChild("PlayerCardRemotes", 5)
+local requestSnapshotRF = playerCardRemotes and playerCardRemotes:FindFirstChild("RequestSnapshot")
+local snapshotUpdatedRE = playerCardRemotes and playerCardRemotes:FindFirstChild("SnapshotUpdated")
+
+local serverSnapshot = nil
+local snapshotCollectablesById = {}
+local snapshotTitlesById = {}
+
+local function applyServerSnapshot(snapshot)
+	if typeof(snapshot) ~= "table" then return end
+	serverSnapshot = snapshot
+	snapshotCollectablesById = typeof(snapshot.collectablesById) == "table" and snapshot.collectablesById or {}
+	snapshotTitlesById = typeof(snapshot.titlesById) == "table" and snapshot.titlesById or {}
+end
 
 --//////////////////////////////////////////////////////////
 -- SOUND
@@ -48322,6 +48515,8 @@ local function hasBoolInFolder(folderName, key)
 end
 
 local function getCollectedCollectable(id: string): boolean
+	local snap = snapshotCollectablesById[id]
+	if typeof(snap) == "boolean" then return snap end
 	local a = plr:GetAttribute("Collectable_" .. id)
 	if typeof(a) == "boolean" then return a end
 	local f = hasBoolInFolder("Collectables", id)
@@ -48330,6 +48525,8 @@ local function getCollectedCollectable(id: string): boolean
 end
 
 local function getUnlockedTitle(id: string): boolean
+	local snap = snapshotTitlesById[id]
+	if typeof(snap) == "boolean" then return snap end
 	local a = plr:GetAttribute("Title_" .. id)
 	if typeof(a) == "boolean" then return a end
 	local f = hasBoolInFolder("Titles", id)
@@ -48357,6 +48554,9 @@ local function getUnlockedTitle(id: string): boolean
 end
 
 local function getEquippedTitleId(): string?
+	if serverSnapshot and typeof(serverSnapshot.equippedTitle) == "string" and serverSnapshot.equippedTitle ~= "" then
+		return serverSnapshot.equippedTitle
+	end
 	local a = plr:GetAttribute("EquippedTitle")
 	if typeof(a) == "string" and a ~= "" then return a end
 	return nil
@@ -48366,7 +48566,7 @@ local function setEquippedTitleId(id: string?)
 	if titlesEquipEvent then
 		titlesEquipEvent:FireServer(id or "")
 	else
-		plr:SetAttribute("EquippedTitle", id or "")
+		warn("[PlayerCardUi] EquipTitle remote unavailable; request ignored.")
 	end
 end
 
@@ -49883,17 +50083,25 @@ end)
 local function countProgress()
 	local totalC = #COLLECTABLES
 	local gotC = 0
-	for _, it in ipairs(COLLECTABLES) do
-		if getCollectedCollectable(it.Id) then
-			gotC += 1
-		end
-	end
-
 	local totalT = #DATA.Titles
 	local gotT = 0
-	for _, it in ipairs(DATA.Titles) do
-		if getUnlockedTitle(it.Id) then
-			gotT += 1
+
+	if serverSnapshot and typeof(serverSnapshot.progress) == "table" then
+		local progress = serverSnapshot.progress
+		if typeof(progress.collectablesOwned) == "number" then gotC = progress.collectablesOwned end
+		if typeof(progress.collectablesTotal) == "number" then totalC = progress.collectablesTotal end
+		if typeof(progress.titlesUnlocked) == "number" then gotT = progress.titlesUnlocked end
+		if typeof(progress.titlesTotal) == "number" then totalT = progress.titlesTotal end
+	else
+		for _, it in ipairs(COLLECTABLES) do
+			if getCollectedCollectable(it.Id) then
+				gotC += 1
+			end
+		end
+		for _, it in ipairs(DATA.Titles) do
+			if getUnlockedTitle(it.Id) then
+				gotT += 1
+			end
 		end
 	end
 
@@ -49970,7 +50178,11 @@ local function updateStats()
 	local totalPlaySeconds = sessionSeconds
 	local totalXP = sessionXP
 
-	if STAT_SOURCE_MODE == "Leaderstats" then
+	if serverSnapshot and typeof(serverSnapshot.stats) == "table" then
+		local stats = serverSnapshot.stats
+		if typeof(stats.playtimeSeconds) == "number" then totalPlaySeconds = stats.playtimeSeconds end
+		if typeof(stats.xp) == "number" then totalXP = stats.xp end
+	elseif STAT_SOURCE_MODE == "Leaderstats" then
 		local lsPlay = getLeaderInt(LEADERSTAT_PLAYTIME_NAME)
 		if lsPlay ~= nil then totalPlaySeconds = lsPlay end
 		local lsXP = getLeaderInt(LEADERSTAT_XP_NAME)
@@ -50155,6 +50367,27 @@ end
 
 playerGui.DescendantAdded:Connect(onDescendantAdded)
 gui.DescendantAdded:Connect(onDescendantAdded)
+
+if snapshotUpdatedRE and snapshotUpdatedRE:IsA("RemoteEvent") then
+	snapshotUpdatedRE.OnClientEvent:Connect(function(snapshot)
+		applyServerSnapshot(snapshot)
+		renderCollectables()
+		renderTitles()
+		countProgress()
+		updateStats()
+	end)
+end
+
+if requestSnapshotRF and requestSnapshotRF:IsA("RemoteFunction") then
+	task.spawn(function()
+		local ok, snapshot = pcall(function()
+			return requestSnapshotRF:InvokeServer()
+		end)
+		if ok then
+			applyServerSnapshot(snapshot)
+		end
+	end)
+end
 
 --//////////////////////////////////////////////////////////
 -- CATALOG REFRESH
