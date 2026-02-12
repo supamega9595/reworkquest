@@ -50306,10 +50306,11 @@ toggleEvent.Event:Connect(function(open: boolean?)
 	end
 	if open then
 		openUI()
-		if not isOpen then
-			forceOpenVisibleState()
-			isOpen = true
-		end
+		task.defer(function()
+			if isOpen then
+				forceOpenVisibleState()
+			end
+		end)
 	else
 		closeUI()
 	end
@@ -50352,6 +50353,11 @@ local function connectOpenButton(candidate: Instance)
 	candidate.MouseButton1Click:Connect(function()
 		click()
 		openUI()
+		task.defer(function()
+			if isOpen then
+				forceOpenVisibleState()
+			end
+		end)
 	end)
 
 	candidate.AncestryChanged:Connect(function(_, parent)
