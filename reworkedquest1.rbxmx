@@ -37810,18 +37810,79 @@ local playerGui = player:WaitForChild("PlayerGui")
 local UserInputService = game:GetService("UserInputService")
 local AvatarEditorService = game:GetService("AvatarEditorService")
 
-local setPlayerCardOpen
-
 --========================================================
--- SETTINGS ICON (routes into PlayerCard Settings tab)
+-- SETTINGS GUI (unchanged logic)
 --========================================================
 
-local function openPlayerCardSettings()
-	if _G.SettingsSoundManager then
-		_G.SettingsSoundManager:playOpen()
+-- Wait for settings GUI to be available
+local settingsGui = nil
+local function waitForSettingsGui()
+	while not settingsGui do
+		local settingsScreenGui = playerGui:FindFirstChild("Settings")
+		if settingsScreenGui then
+			local mainFrame = settingsScreenGui:FindFirstChild("MainFrame")
+			if mainFrame then
+				settingsGui = mainFrame:FindFirstChild("SettingsGui")
+			end
+		end
+		if not settingsGui then
+			task.wait(0.1)
+		end
+	end
+end
+
+-- Settings toggle state
+local OPCL = false
+local hasOpenedOnce = false
+local wasMouseLocked = false
+
+-- Function to toggle settings menu (copied from original OpenClose script)
+local function toggleSettings()
+	if not settingsGui then
+		waitForSettingsGui()
 	end
 
-	setPlayerCardOpen(true, "Settings")
+	if OPCL == false then
+		OPCL = true
+		settingsGui:TweenPosition(UDim2.new(0.5,0,0.5,0), "InOut", "Sine", .35, true)
+
+		-- Play open sound
+		if _G.SettingsSoundManager then
+			_G.SettingsSoundManager:playOpen()
+		end
+
+		-- Unlock mouse for settings menu
+		-- Store current mouse state
+		wasMouseLocked = (UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter)
+		UserInputService.MouseIconEnabled = true
+		UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+
+		-- Notify Body View script that mouse should be free
+		if _G.BodyViewMouseState then
+			_G.BodyViewMouseState(true)
+		end
+
+		hasOpenedOnce = true
+	else
+		OPCL = false
+		settingsGui:TweenPosition(UDim2.new(0.5,0,1.5,0), "InOut", "Sine", .35, true)
+
+		-- Play close sound
+		if _G.SettingsSoundManager then
+			_G.SettingsSoundManager:playClose()
+		end
+
+		-- Only relock mouse if it was locked before and menu has been opened before
+		if hasOpenedOnce and wasMouseLocked then
+			UserInputService.MouseIconEnabled = false
+			UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+		end
+
+		-- Notify Body View script that mouse should be locked
+		if _G.BodyViewMouseState then
+			_G.BodyViewMouseState(false)
+		end
+	end
 end
 
 -- Create the settings icon
@@ -37829,14 +37890,14 @@ local icon = Icon.new()
 	:setLabel("Settings")
 	:setImage(6031280882, "Deselected")
 	:setImage(187897041, "Selected")
-	:bindEvent("selected", openPlayerCardSettings)
-	:bindEvent("deselected", function() end)
+	:bindEvent("selected", toggleSettings)
+	:bindEvent("deselected", toggleSettings)
 
 -- Ensure hotkey M still works
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if gameProcessed then return end
 	if input.KeyCode == Enum.KeyCode.M then
-		openPlayerCardSettings()
+		toggleSettings()
 	end
 end)
 
@@ -37872,21 +37933,21 @@ local function getPlayerCardToggleEvent()
 	return ev
 end
 
-local function firePlayerCard(open: boolean, tabName: string?)
+local function firePlayerCard(open: boolean)
 	if playerCardToggleEvent and playerCardToggleEvent.Parent then
-		playerCardToggleEvent:Fire({open = open, tab = tabName})
+		playerCardToggleEvent:Fire(open)
 		return true
 	end
 	playerCardToggleEvent = getPlayerCardToggleEvent()
 	if not playerCardToggleEvent then
 		return false
 	end
-	playerCardToggleEvent:Fire({open = open, tab = tabName})
+	playerCardToggleEvent:Fire(open)
 	return true
 end
 
-setPlayerCardOpen = function(open: boolean, tabName: string?)
-	if firePlayerCard(open, tabName) then
+local function setPlayerCardOpen(open: boolean)
+	if firePlayerCard(open) then
 		return
 	end
 	if retryingPlayerCard then
@@ -37896,7 +37957,7 @@ setPlayerCardOpen = function(open: boolean, tabName: string?)
 	task.spawn(function()
 		local started = os.clock()
 		while os.clock() - started < 10 do
-			if firePlayerCard(open, tabName) then
+			if firePlayerCard(open) then
 				retryingPlayerCard = false
 				return
 			end
@@ -37912,10 +37973,10 @@ local playerCardIcon = Icon.new()
 	:setImage(1249556329, "Deselected") -- User/profile icon
 	:setImage(1249556329, "Selected")   -- Same icon for selected
 	:bindEvent("selected", function()
-		setPlayerCardOpen(true, nil)
+		setPlayerCardOpen(true)
 	end)
 	:bindEvent("deselected", function()
-		setPlayerCardOpen(false, nil)
+		setPlayerCardOpen(false)
 	end)
 ]]></ProtectedString>
 				<bool name="Disabled">false</bool>
@@ -48426,7 +48487,7 @@ local subtitle = new("TextLabel", {
 	TextSize = 13,
 	TextColor3 = THEME.Muted,
 	TextXAlignment = Enum.TextXAlignment.Left,
-	Text = ("Session XP: +%d/min · Tabs: Overview / Settings / Collectables / Titles"):format(XP_PER_MINUTE),
+	Text = ("Session XP: +%d/min · Tabs: Overview / Collectables / Titles"):format(XP_PER_MINUTE),
 	Parent = header
 })
 outlineText(subtitle)
@@ -48678,9 +48739,8 @@ end
 -- PAGES
 --//////////////////////////////////////////////////////////
 local overviewPage = makePage("Overview", 1)
-local settingsPage = makePage("Settings", 2)
-local collectPage  = makePage("Collectables", 3)
-local titlesPage   = makePage("Titles", 4)
+local collectPage  = makePage("Collectables", 2)
+local titlesPage   = makePage("Titles", 3)
 
 --//////////////////////////////////////////////////////////
 -- OVERVIEW CONTENT
@@ -48937,380 +48997,6 @@ progPill2.Position = UDim2.new(0, 156, 0, 2)
 	})
 outlineText(hint)
 
-
---//////////////////////////////////////////////////////////
--- SETTINGS PAGE
---//////////////////////////////////////////////////////////
-local SETTINGS_DEFAULTS = {
-	GlobalShadows = true,
-	EnvironmentSpecularScale = 1,
-	EnvironmentDiffuseScale = 1,
-	SoundRegionsMuted = false,
-	FieldOfView = 100,
-	CameraBobbingEnabled = true,
-	MotionBlurEnabled = true,
-	ChatEnabled = true,
-}
-
-local function getSettingValue(key)
-	if _G.getSetting then
-		local ok, value = pcall(_G.getSetting, key)
-		if ok and value ~= nil then
-			return value
-		end
-	end
-	return SETTINGS_DEFAULTS[key]
-end
-
-local function setSettingValue(key, value)
-	if _G.updateSetting then
-		pcall(_G.updateSetting, key, value)
-	end
-end
-
-local function applyRuntimeSetting(key, value)
-	if key == "GlobalShadows" then
-		game.Lighting.GlobalShadows = value and true or false
-	elseif key == "EnvironmentSpecularScale" then
-		game.Lighting.EnvironmentSpecularScale = value and 1 or 0
-	elseif key == "EnvironmentDiffuseScale" then
-		game.Lighting.EnvironmentDiffuseScale = value and 1 or 0
-	elseif key == "SoundRegionsMuted" then
-		if value then
-			if _G.muteSoundRegions then pcall(_G.muteSoundRegions) end
-		else
-			if _G.unmuteSoundRegions then pcall(_G.unmuteSoundRegions) end
-		end
-	elseif key == "FieldOfView" then
-		local cam = workspace.CurrentCamera
-		if cam then
-			cam.FieldOfView = math.clamp(tonumber(value) or 100, 70, 120)
-		end
-	elseif key == "CameraBobbingEnabled" then
-		_G.CameraBobbingEnabled = value and true or false
-	elseif key == "MotionBlurEnabled" then
-		_G.MotionBlurEnabled = value and true or false
-	elseif key == "ChatEnabled" then
-		pcall(function()
-			game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.Chat, value and true or false)
-		end)
-	end
-end
-
-local settingsWrap = new("Frame", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0, 12, 0, 12),
-	Size = UDim2.new(1, -24, 1, -24),
-	Parent = settingsPage,
-})
-
-local settingsTitle = new("TextLabel", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0, 0, 0, 0),
-	Size = UDim2.new(1, 0, 0, 34),
-	Font = Enum.Font.GothamBlack,
-	TextSize = 24,
-	TextColor3 = THEME.Text,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	Text = "Settings",
-	Parent = settingsWrap,
-})
-outlineText(settingsTitle)
-
-local settingsHint = new("TextLabel", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0, 0, 0, 34),
-	Size = UDim2.new(1, 0, 0, 18),
-	Font = Enum.Font.Gotham,
-	TextSize = 13,
-	TextColor3 = THEME.Muted,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	Text = "Live controls with instant feedback. Your choices are persisted.",
-	Parent = settingsWrap,
-})
-
-local settingsScroll = new("ScrollingFrame", {
-	BackgroundTransparency = 1,
-	BorderSizePixel = 0,
-	Position = UDim2.new(0, 0, 0, 58),
-	Size = UDim2.new(1, 0, 1, -58),
-	ScrollBarThickness = 5,
-	ScrollBarImageColor3 = Color3.fromRGB(80,80,96),
-	Parent = settingsWrap,
-})
-
-local settingsList = new("UIListLayout", {
-	SortOrder = Enum.SortOrder.LayoutOrder,
-	Padding = UDim.new(0, 12),
-	Parent = settingsScroll,
-})
-new("UIPadding", {
-	PaddingTop = UDim.new(0, 6),
-	PaddingBottom = UDim.new(0, 12),
-	PaddingLeft = UDim.new(0, 2),
-	PaddingRight = UDim.new(0, 2),
-	Parent = settingsScroll,
-})
-
-local settingsAnimRows = {}
-local function registerSettingsRow(row)
-	table.insert(settingsAnimRows, row)
-	return row
-end
-
-local function makeSettingsCard(titleText, bodyText)
-	local card = registerSettingsRow(new("Frame", {
-		BackgroundColor3 = THEME.Card2,
-		BorderSizePixel = 0,
-		Size = UDim2.new(1, 0, 0, 70),
-		Parent = settingsScroll,
-	}))
-	corner(card, 16)
-	stroke(card, 1.8, 0.08, THEME.Black)
-	gradient(card, Color3.fromRGB(20,18,16), Color3.fromRGB(12,10,10), 135)
-
-	local accent = new("Frame", {
-		BackgroundColor3 = THEME.Accent,
-		BackgroundTransparency = 0.35,
-		BorderSizePixel = 0,
-		Size = UDim2.new(0, 4, 1, -14),
-		Position = UDim2.new(0, 8, 0, 7),
-		Parent = card,
-	})
-	corner(accent, 999)
-
-	local titleLbl = new("TextLabel", {
-		BackgroundTransparency = 1,
-		Position = UDim2.new(0, 20, 0, 10),
-		Size = UDim2.new(1, -130, 0, 22),
-		Font = Enum.Font.GothamBlack,
-		TextSize = 15,
-		TextColor3 = THEME.Text,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Text = titleText,
-		Parent = card,
-	})
-	outlineText(titleLbl)
-
-	local bodyLbl = new("TextLabel", {
-		BackgroundTransparency = 1,
-		Position = UDim2.new(0, 20, 0, 34),
-		Size = UDim2.new(1, -130, 0, 24),
-		Font = Enum.Font.Gotham,
-		TextSize = 12,
-		TextColor3 = THEME.Muted,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		TextWrapped = true,
-		Text = bodyText,
-		Parent = card,
-	})
-
-	local toggleButton = new("TextButton", {
-		BackgroundColor3 = THEME.TabInactive,
-		BorderSizePixel = 0,
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -12, 0.5, 0),
-		Size = UDim2.new(0, 102, 0, 36),
-		Font = Enum.Font.GothamBlack,
-		TextSize = 12,
-		TextColor3 = THEME.Black,
-		Text = "ON",
-		Parent = card,
-	})
-	corner(toggleButton, 999)
-	stroke(toggleButton, 1.5, 0.1, THEME.Black)
-	addButtonFX(toggleButton, 1.04, 0.96)
-
-	local knob = new("Frame", {
-		BackgroundColor3 = THEME.Text,
-		BorderSizePixel = 0,
-		Size = UDim2.new(0, 28, 0, 28),
-		Position = UDim2.new(0, 4, 0.5, -14),
-		Parent = toggleButton,
-	})
-	corner(knob, 999)
-	stroke(knob, 1.5, 0.35, THEME.Black)
-
-	return card, toggleButton, knob
-end
-
-local function wireToggle(titleText, bodyText, key, onValue)
-	local card, btn, knob = makeSettingsCard(titleText, bodyText)
-
-	local function normalize(v)
-		if key == "EnvironmentSpecularScale" or key == "EnvironmentDiffuseScale" then
-			return (tonumber(v) or 0) >= 1
-		end
-		if key == "SoundRegionsMuted" then
-			return v == true
-		end
-		return v == true
-	end
-
-	local function refresh(animated)
-		local raw = getSettingValue(key)
-		local enabled = normalize(raw)
-		if key == "SoundRegionsMuted" then enabled = not enabled end
-		btn.Text = enabled and "ON" or "OFF"
-		btn.BackgroundColor3 = enabled and THEME.Accent or Color3.fromRGB(55, 56, 70)
-		btn.TextColor3 = enabled and THEME.Black or THEME.Text
-		local goal = enabled and UDim2.new(1, -32, 0.5, -14) or UDim2.new(0, 4, 0.5, -14)
-		if animated then
-			tween(knob, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = goal})
-		else
-			knob.Position = goal
-		end
-	end
-
-	refresh(false)
-	btn.MouseButton1Click:Connect(function()
-		local raw = getSettingValue(key)
-		local isEnabled = normalize(raw)
-		if key == "SoundRegionsMuted" then
-			isEnabled = not isEnabled
-		end
-		local nextEnabled = not isEnabled
-		local storedValue = nextEnabled
-		if key == "EnvironmentSpecularScale" or key == "EnvironmentDiffuseScale" then
-			storedValue = nextEnabled and 1 or 0
-		elseif key == "SoundRegionsMuted" then
-			storedValue = not nextEnabled
-		end
-
-		setSettingValue(key, storedValue)
-		applyRuntimeSetting(key, storedValue)
-		if onValue then onValue(storedValue) end
-		refresh(true)
-		if _G.SettingsSoundManager then
-			if nextEnabled then _G.SettingsSoundManager:playOn() else _G.SettingsSoundManager:playOff() end
-		else
-			click()
-		end
-	end)
-
-	return card
-end
-
-wireToggle("Global Shadows", "Sharper depth and stronger lighting contrast.", "GlobalShadows")
-wireToggle("Environment Specular", "Controls reflective highlights from world lighting.", "EnvironmentSpecularScale")
-wireToggle("Environment Diffuse", "Controls soft bounced-light contribution.", "EnvironmentDiffuseScale")
-wireToggle("Sound Regions", "Mute ambient region emitters around the map.", "SoundRegionsMuted")
-wireToggle("Camera Bobbing", "Head movement sway while you walk and sprint.", "CameraBobbingEnabled")
-wireToggle("Motion Blur", "Enable post-process motion blur effects.", "MotionBlurEnabled")
-wireToggle("Chat", "Show/hide Roblox chat panel.", "ChatEnabled")
-
-local fovCard = registerSettingsRow(new("Frame", {
-	BackgroundColor3 = THEME.Card2,
-	BorderSizePixel = 0,
-	Size = UDim2.new(1, 0, 0, 88),
-	Parent = settingsScroll,
-}))
-corner(fovCard, 16)
-stroke(fovCard, 1.8, 0.08, THEME.Black)
-gradient(fovCard, Color3.fromRGB(20,18,16), Color3.fromRGB(12,10,10), 135)
-
-local fovTitle = new("TextLabel", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0, 20, 0, 10),
-	Size = UDim2.new(1, -40, 0, 22),
-	Font = Enum.Font.GothamBlack,
-	TextSize = 15,
-	TextColor3 = THEME.Text,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	Text = "Field of View",
-	Parent = fovCard,
-})
-outlineText(fovTitle)
-
-local fovBody = new("TextLabel", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0, 20, 0, 34),
-	Size = UDim2.new(1, -40, 0, 18),
-	Font = Enum.Font.Gotham,
-	TextSize = 12,
-	TextColor3 = THEME.Muted,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	Text = "Tune camera zoom comfort from 70 to 120.",
-	Parent = fovCard,
-})
-
-local fovMinus = new("TextButton", {
-	BackgroundColor3 = Color3.fromRGB(52,52,68),
-	BorderSizePixel = 0,
-	Position = UDim2.new(0, 20, 1, -38),
-	Size = UDim2.new(0, 34, 0, 28),
-	Text = "-",
-	Font = Enum.Font.GothamBlack,
-	TextSize = 18,
-	TextColor3 = THEME.Text,
-	Parent = fovCard,
-})
-corner(fovMinus, 10)
-addButtonFX(fovMinus, 1.04, 0.94)
-
-local fovPlus = new("TextButton", {
-	BackgroundColor3 = Color3.fromRGB(52,52,68),
-	BorderSizePixel = 0,
-	Position = UDim2.new(0, 194, 1, -38),
-	Size = UDim2.new(0, 34, 0, 28),
-	Text = "+",
-	Font = Enum.Font.GothamBlack,
-	TextSize = 18,
-	TextColor3 = THEME.Text,
-	Parent = fovCard,
-})
-corner(fovPlus, 10)
-addButtonFX(fovPlus, 1.04, 0.94)
-
-local fovValue = new("TextLabel", {
-	BackgroundColor3 = Color3.fromRGB(24,24,32),
-	BorderSizePixel = 0,
-	Position = UDim2.new(0, 62, 1, -38),
-	Size = UDim2.new(0, 124, 0, 28),
-	Font = Enum.Font.GothamBlack,
-	TextSize = 13,
-	TextColor3 = THEME.Text,
-	Text = "100",
-	Parent = fovCard,
-})
-corner(fovValue, 10)
-
-local function refreshFov()
-	local current = math.clamp(math.floor(tonumber(getSettingValue("FieldOfView")) or 100), 70, 120)
-	fovValue.Text = tostring(current)
-end
-
-local function shiftFov(delta)
-	local current = math.clamp(math.floor(tonumber(getSettingValue("FieldOfView")) or 100), 70, 120)
-	local nextValue = math.clamp(current + delta, 70, 120)
-	setSettingValue("FieldOfView", nextValue)
-	applyRuntimeSetting("FieldOfView", nextValue)
-	refreshFov()
-	click()
-end
-
-refreshFov()
-fovMinus.MouseButton1Click:Connect(function() shiftFov(-5) end)
-fovPlus.MouseButton1Click:Connect(function() shiftFov(5) end)
-
-settingsList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-	setScrollCanvas(settingsScroll, settingsList)
-end)
-task.defer(function()
-	setScrollCanvas(settingsScroll, settingsList)
-end)
-
-local function animateSettingsRowsIn()
-	for i, row in ipairs(settingsAnimRows) do
-		row.BackgroundTransparency = 1
-		row.Position = UDim2.new(0, 0, 0, 6)
-		task.delay((i - 1) * 0.025, function()
-			tween(row, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 0})
-			tween(row, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = UDim2.new(0, 0, 0, 0)})
-		end)
-	end
-end
-
 --//////////////////////////////////////////////////////////
 -- COLLECTABLES PAGE
 --//////////////////////////////////////////////////////////
@@ -49539,11 +49225,10 @@ new("UIPadding", {PaddingTop=UDim.new(0,6),PaddingLeft=UDim.new(0,6),PaddingRigh
 -- TAB BUTTONS + NAV (FIXED: uses JumpTo(pageFrame), not index)
 --//////////////////////////////////////////////////////////
 local tabButtons = {}
-local tabOrder = { "Overview", "Settings", "Collectables", "Titles" }
+local tabOrder = { "Overview", "Collectables", "Titles" }
 
 local pagesByName = {
 	Overview = overviewPage,
-	Settings = settingsPage,
 	Collectables = collectPage,
 	Titles = titlesPage,
 }
@@ -49602,9 +49287,6 @@ local function jumpToTab(name)
 	end
 
 	setUnderlineTo(tabButtons[name])
-	if name == "Settings" then
-		animateSettingsRowsIn()
-	end
 	click()
 end
 
@@ -50386,37 +50068,17 @@ local function closeUI()
 	end)
 end
 
-toggleEvent.Event:Connect(function(payload)
-	local requestedOpen = nil
-	local requestedTab = nil
-
-	if typeof(payload) == "table" then
-		requestedOpen = payload.open
-		requestedTab = payload.tab
-	else
-		requestedOpen = payload
-	end
-
-	if requestedOpen == nil then
+toggleEvent.Event:Connect(function(open: boolean?)
+	if open == nil then
 		if isOpen then
 			closeUI()
 		else
 			openUI()
 		end
-		if requestedTab and pagesByName[requestedTab] then
-			task.defer(function()
-				jumpToTab(requestedTab)
-			end)
-		end
 		return
 	end
-
-	if requestedOpen then
+	if open then
 		openUI()
-		local tabToOpen = (typeof(requestedTab) == "string" and pagesByName[requestedTab]) and requestedTab or "Overview"
-		task.defer(function()
-			jumpToTab(tabToOpen)
-		end)
 	else
 		closeUI()
 	end
