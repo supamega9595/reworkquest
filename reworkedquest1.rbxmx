@@ -47962,19 +47962,40 @@ local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
-local function loadStatsConfig()
-	local configFolder = ReplicatedStorage:FindFirstChild("Configs")
-	local module = configFolder and configFolder:FindFirstChild("StatsConfig") or ReplicatedStorage:FindFirstChild("StatsConfig")
-	if not module then
-		module = configFolder and configFolder:FindFirstChild("StatConfig") or ReplicatedStorage:FindFirstChild("StatConfig")
-	end
-	if not module then
-		module = configFolder and configFolder:WaitForChild("StatsConfig", 3) or ReplicatedStorage:WaitForChild("StatsConfig", 3)
-	end
-	if not module then
-		module = configFolder and configFolder:WaitForChild("StatConfig", 3) or ReplicatedStorage:WaitForChild("StatConfig", 3)
+local CONTRACT = {
+	ConfigFolder = "Configs",
+	StatsConfigNames = { "StatsConfig", "StatConfig" },
+	TitlesConfigName = "TitlesConfig",
+	ToggleEventName = "TogglePlayerCard",
+	CollectablesCatalog = "CollectablesCatalog",
+	CollectablesPreview = "CollectablesPreview",
+	CollectablesRemotes = "CollectablesRemotes",
+	CollectablesCollectedRemote = "Collected",
+	TitlesRemotes = "TitlesRemotes",
+	TitlesEquipRemote = "EquipTitle",
+	CollectableAttributePrefix = "Collectable_",
+	EquippedTitleAttribute = "EquippedTitle",
+	LeaderstatsFolder = "leaderstats",
+}
+
+local function loadConfigModule(candidates, fallback, fallbackWarn)
+	local configFolder = ReplicatedStorage:FindFirstChild(CONTRACT.ConfigFolder)
+	local function tryFind(waitForChild)
+		for _, moduleName in ipairs(candidates) do
+			local module = if configFolder then
+				(if waitForChild then configFolder:WaitForChild(moduleName, 3) else configFolder:FindFirstChild(moduleName))
+			else nil
+			if not module then
+				module = if waitForChild then ReplicatedStorage:WaitForChild(moduleName, 3) else ReplicatedStorage:FindFirstChild(moduleName)
+			end
+			if module then
+				return module
+			end
+		end
+		return nil
 	end
 
+	local module = tryFind(false) or tryFind(true)
 	if module then
 		local ok, result = pcall(require, module)
 		if ok and typeof(result) == "table" then
@@ -47982,8 +48003,16 @@ local function loadStatsConfig()
 		end
 	end
 
-	warn("[PlayerCardUi] StatsConfig not found or failed to load; using defaults.")
-	return { Collectables = {} }
+	warn(fallbackWarn)
+	return fallback
+end
+
+local function loadStatsConfig()
+	return loadConfigModule(
+		CONTRACT.StatsConfigNames,
+		{ Collectables = {} },
+		"[PlayerCardUi] StatsConfig not found or failed to load; using defaults."
+	)
 end
 
 local StatsConfig = loadStatsConfig()
@@ -47997,21 +48026,11 @@ local RARITY_PREFIX = CollectablesStatusConfig.RarityPrefix or "RARITY: "
 local DESCRIPTION_FALLBACK = CollectablesStatusConfig.DescriptionFallback or "No description set."
 
 local function loadTitlesConfig()
-	local configFolder = ReplicatedStorage:FindFirstChild("Configs")
-	local module = configFolder and configFolder:FindFirstChild("TitlesConfig") or ReplicatedStorage:FindFirstChild("TitlesConfig")
-	if not module then
-		module = configFolder and configFolder:WaitForChild("TitlesConfig", 3) or ReplicatedStorage:WaitForChild("TitlesConfig", 3)
-	end
-
-	if module then
-		local ok, result = pcall(require, module)
-		if ok and typeof(result) == "table" then
-			return result
-		end
-	end
-
-	warn("[PlayerCardUi] TitlesConfig not found or failed to load; using defaults.")
-	return { Titles = {} }
+	return loadConfigModule(
+		{ CONTRACT.TitlesConfigName },
+		{ Titles = {} },
+		"[PlayerCardUi] TitlesConfig not found or failed to load; using defaults."
+	)
 end
 
 local TitlesConfig = loadTitlesConfig()
@@ -48026,10 +48045,10 @@ gui.Enabled = true
 gui.IgnoreGuiInset = true
 gui.ResetOnSpawn = false
 
-local toggleEvent = gui:FindFirstChild("TogglePlayerCard")
+local toggleEvent = gui:FindFirstChild(CONTRACT.ToggleEventName)
 if not toggleEvent then
 	toggleEvent = Instance.new("BindableEvent")
-	toggleEvent.Name = "TogglePlayerCard"
+	toggleEvent.Name = CONTRACT.ToggleEventName
 	toggleEvent.Parent = gui
 end
 
@@ -48128,8 +48147,11 @@ end
 --//////////////////////////////////////////////////////////
 -- COLLECTABLES CATALOG (from server)
 --//////////////////////////////////////////////////////////
-local CatalogFolder = ReplicatedStorage:WaitForChild("CollectablesCatalog", 10)
-local PreviewFolder = ReplicatedStorage:FindFirstChild("CollectablesPreview")
+local CatalogFolder = ReplicatedStorage:WaitForChild(CONTRACT.CollectablesCatalog, 10)
+if not CatalogFolder then
+	warn(("[PlayerCardUi] Missing collectables catalog folder: %s"):format(CONTRACT.CollectablesCatalog))
+end
+local PreviewFolder = ReplicatedStorage:FindFirstChild(CONTRACT.CollectablesPreview)
 
 local function getCollectablesCatalog()
 	local list = {}
@@ -48184,8 +48206,13 @@ end
 --//////////////////////////////////////////////////////////
 -- TITLES REMOTES
 --//////////////////////////////////////////////////////////
-local titlesRemotes = ReplicatedStorage:WaitForChild("TitlesRemotes", 5)
-local titlesEquipEvent = titlesRemotes and titlesRemotes:FindFirstChild("EquipTitle")
+local titlesRemotes = ReplicatedStorage:WaitForChild(CONTRACT.TitlesRemotes, 5)
+local titlesEquipEvent = titlesRemotes and titlesRemotes:FindFirstChild(CONTRACT.TitlesEquipRemote)
+if not titlesRemotes then
+	warn(("[PlayerCardUi] Missing remotes folder: %s"):format(CONTRACT.TitlesRemotes))
+elseif not titlesEquipEvent then
+	warn(("[PlayerCardUi] Missing title equip remote: %s/%s"):format(CONTRACT.TitlesRemotes, CONTRACT.TitlesEquipRemote))
+end
 
 --//////////////////////////////////////////////////////////
 -- SOUND
@@ -48322,7 +48349,7 @@ local function hasBoolInFolder(folderName, key)
 end
 
 local function getCollectedCollectable(id: string): boolean
-	local a = plr:GetAttribute("Collectable_" .. id)
+	local a = plr:GetAttribute(CONTRACT.CollectableAttributePrefix .. id)
 	if typeof(a) == "boolean" then return a end
 	local f = hasBoolInFolder("Collectables", id)
 	if typeof(f) == "boolean" then return f end
@@ -48337,7 +48364,7 @@ local function getUnlockedTitle(id: string): boolean
 
 	local xpValue = 0
 	if STAT_SOURCE_MODE == "Leaderstats" then
-		local ls = plr:FindFirstChild("leaderstats")
+		local ls = plr:FindFirstChild(CONTRACT.LeaderstatsFolder)
 		local xpObj = ls and ls:FindFirstChild(LEADERSTAT_XP_NAME)
 		if xpObj and xpObj:IsA("IntValue") then
 			xpValue = xpObj.Value
@@ -48357,7 +48384,7 @@ local function getUnlockedTitle(id: string): boolean
 end
 
 local function getEquippedTitleId(): string?
-	local a = plr:GetAttribute("EquippedTitle")
+	local a = plr:GetAttribute(CONTRACT.EquippedTitleAttribute)
 	if typeof(a) == "string" and a ~= "" then return a end
 	return nil
 end
@@ -48366,7 +48393,7 @@ local function setEquippedTitleId(id: string?)
 	if titlesEquipEvent then
 		titlesEquipEvent:FireServer(id or "")
 	else
-		plr:SetAttribute("EquippedTitle", id or "")
+		plr:SetAttribute(CONTRACT.EquippedTitleAttribute, id or "")
 	end
 end
 
@@ -49923,8 +49950,8 @@ end
 -- LIVE UPDATES FROM SERVER (CollectablesRemotes/Collected)
 --//////////////////////////////////////////////////////////
 do
-	local remotes = ReplicatedStorage:WaitForChild("CollectablesRemotes", 5)
-	local collectedRE = remotes and remotes:WaitForChild("Collected", 5)
+	local remotes = ReplicatedStorage:WaitForChild(CONTRACT.CollectablesRemotes, 5)
+	local collectedRE = remotes and remotes:WaitForChild(CONTRACT.CollectablesCollectedRemote, 5)
 
 	if collectedRE then
 		collectedRE.OnClientEvent:Connect(function(id: string)
@@ -49938,11 +49965,11 @@ end
 
 -- Backup: attribute changes update visuals + counts
 plr.AttributeChanged:Connect(function(attr)
-	if string.sub(attr, 1, #"Collectable_") == "Collectable_" then
-		local id = string.sub(attr, #"Collectable_" + 1)
+	if string.sub(attr, 1, #CONTRACT.CollectableAttributePrefix) == CONTRACT.CollectableAttributePrefix then
+		local id = string.sub(attr, #CONTRACT.CollectableAttributePrefix + 1)
 		updateCollectableCardVisual(id)
 		countProgress()
-	elseif attr == "EquippedTitle" then
+	elseif attr == CONTRACT.EquippedTitleAttribute then
 		pendingTitleEquipId = nil
 		renderTitles()
 		countProgress()
@@ -49956,7 +49983,7 @@ local joinTime = os.clock()
 local lastLevel = 1
 
 local function getLeaderInt(name)
-	local ls = plr:FindFirstChild("leaderstats")
+	local ls = plr:FindFirstChild(CONTRACT.LeaderstatsFolder)
 	if not ls then return nil end
 	local v = ls:FindFirstChild(name)
 	if v and v:IsA("IntValue") then
@@ -50111,31 +50138,47 @@ end
 --//////////////////////////////////////////////////////////
 -- OPEN BUTTON HOOK
 --//////////////////////////////////////////////////////////
-local hooked = false
-local function tryHookOpenButton()
-	if hooked then return end
+local openButtonConns = {}
+
+local function bindOpenButton(button: GuiButton)
+	if openButtonConns[button] then
+		return
+	end
+	openButtonConns[button] = button.MouseButton1Click:Connect(function()
+		click()
+		openUI()
+	end)
+	button.Destroying:Connect(function()
+		local conn = openButtonConns[button]
+		if conn then
+			conn:Disconnect()
+			openButtonConns[button] = nil
+		end
+	end)
+end
+
+local function scanAndBindOpenButtons()
 	for _, name in ipairs(OPEN_BUTTON_NAMES) do
-		local openBtn = gui:FindFirstChild(name, true)
-			or playerGui:FindFirstChild(name, true)
-		if openBtn and openBtn:IsA("GuiButton") then
-			hooked = true
-			openBtn.MouseButton1Click:Connect(function()
-				click()
-				openUI()
-			end)
+		local guiBtn = gui:FindFirstChild(name, true)
+		if guiBtn and guiBtn:IsA("GuiButton") then
+			bindOpenButton(guiBtn)
+		end
+		local playerGuiBtn = playerGui:FindFirstChild(name, true)
+		if playerGuiBtn and playerGuiBtn:IsA("GuiButton") then
+			bindOpenButton(playerGuiBtn)
 		end
 	end
 end
 
-tryHookOpenButton()
-playerGui.DescendantAdded:Connect(function()
-	if not hooked then
-		tryHookOpenButton()
+scanAndBindOpenButtons()
+playerGui.DescendantAdded:Connect(function(desc)
+	if desc:IsA("GuiButton") then
+		scanAndBindOpenButtons()
 	end
 end)
-gui.DescendantAdded:Connect(function()
-	if not hooked then
-		tryHookOpenButton()
+gui.DescendantAdded:Connect(function(desc)
+	if desc:IsA("GuiButton") then
+		scanAndBindOpenButtons()
 	end
 end)
 
@@ -50170,7 +50213,8 @@ end)
 
 closeUI() -- start closed
 
-print("[PlayerCardUi] Elite Tabs Profile Hub running. (V3: Overview/Collectables/Titles)")]]></ProtectedString>
+print("[PlayerCardUi] Elite Tabs Profile Hub running. (V3: Overview/Collectables/Titles)")
+]]></ProtectedString>
 				<bool name="Disabled">false</bool>
 				<Content name="LinkedSource"><null></null></Content>
 				<token name="RunContext">0</token>
