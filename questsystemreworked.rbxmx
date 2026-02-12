@@ -22801,13 +22801,28 @@ local Remotes = QuestSystem:WaitForChild("Remotes")
 local NightHUDUpdate = Remotes:WaitForChild("NightHUDUpdate")
 
 local gui = script.Parent
-local colors = {
+local rarityColors = {
 	Common = Color3.fromRGB(210, 210, 210),
 	Uncommon = Color3.fromRGB(126, 214, 125),
 	Rare = Color3.fromRGB(110, 165, 255),
 	Epic = Color3.fromRGB(170, 110, 255),
 	Legendary = Color3.fromRGB(255, 200, 110),
 }
+
+local function blend(a, b, t)
+	return Color3.new(
+		a.R + (b.R - a.R) * t,
+		a.G + (b.G - a.G) * t,
+		a.B + (b.B - a.B) * t
+	)
+end
+
+local function clampPercent(v)
+	if type(v) ~= "number" then
+		return 0
+	end
+	return math.clamp(v, 0, 1)
+end
 
 gui.ResetOnSpawn = false
 gui.Enabled = false
@@ -22816,57 +22831,102 @@ local root = Instance.new("Frame")
 root.Name = "Main"
 root.AnchorPoint = Vector2.new(0.5, 0)
 root.Position = UDim2.fromScale(0.5, 0.03)
-root.Size = UDim2.fromScale(0.44, 0.12)
-root.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
-root.BackgroundTransparency = 0.08
+root.Size = UDim2.fromScale(0.44, 0.14)
+root.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
+root.BackgroundTransparency = 0.12
 root.BorderSizePixel = 0
+root.ClipsDescendants = false
 root.Parent = gui
+
+local rootScale = Instance.new("UIScale")
+rootScale.Scale = 1
+rootScale.Parent = root
 
 local corner = Instance.new("UICorner")
 corner.CornerRadius = UDim.new(0, 12)
 corner.Parent = root
 
 local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(120, 120, 120)
-stroke.Thickness = 1.5
-stroke.Transparency = 0.2
+stroke.Color = Color3.fromRGB(140, 140, 140)
+stroke.Thickness = 1.4
+stroke.Transparency = 0.16
 stroke.Parent = root
 
+local glowStroke = Instance.new("UIStroke")
+glowStroke.Name = "GlowStroke"
+glowStroke.Color = Color3.fromRGB(140, 140, 140)
+glowStroke.Thickness = 3.5
+glowStroke.Transparency = 0.68
+glowStroke.Parent = root
+
 local sizeConstraint = Instance.new("UISizeConstraint")
-sizeConstraint.MinSize = Vector2.new(320, 72)
-sizeConstraint.MaxSize = Vector2.new(700, 130)
+sizeConstraint.MinSize = Vector2.new(340, 92)
+sizeConstraint.MaxSize = Vector2.new(760, 150)
 sizeConstraint.Parent = root
 
 local title = Instance.new("TextLabel")
 title.Name = "TitleLabel"
 title.BackgroundTransparency = 1
 title.Position = UDim2.new(0, 14, 0, 6)
-title.Size = UDim2.new(1, -28, 0, 22)
+title.Size = UDim2.new(1, -28, 0, 24)
 title.Font = Enum.Font.GothamBold
-title.TextSize = 16
-title.TextColor3 = Color3.fromRGB(235, 235, 235)
+title.TextSize = 18
+title.TextColor3 = Color3.fromRGB(242, 242, 242)
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Text = "Night Quest"
+title.TextTruncate = Enum.TextTruncate.AtEnd
 title.Parent = root
+
+local titleSizeConstraint = Instance.new("UITextSizeConstraint")
+titleSizeConstraint.MinTextSize = 14
+titleSizeConstraint.MaxTextSize = 20
+titleSizeConstraint.Parent = title
+
+local completeTag = Instance.new("TextLabel")
+completeTag.Name = "CompletedTag"
+completeTag.BackgroundColor3 = Color3.fromRGB(48, 86, 58)
+completeTag.BackgroundTransparency = 0.15
+completeTag.BorderSizePixel = 0
+completeTag.AnchorPoint = Vector2.new(1, 0)
+completeTag.Position = UDim2.new(1, -12, 0, 8)
+completeTag.Size = UDim2.new(0, 126, 0, 20)
+completeTag.Font = Enum.Font.GothamBold
+completeTag.Text = "COMPLETED"
+completeTag.TextColor3 = Color3.fromRGB(218, 255, 228)
+completeTag.TextSize = 12
+completeTag.Visible = false
+completeTag.ZIndex = 5
+completeTag.Parent = root
+
+local completeCorner = Instance.new("UICorner")
+completeCorner.CornerRadius = UDim.new(1, 0)
+completeCorner.Parent = completeTag
 
 local progressText = Instance.new("TextLabel")
 progressText.Name = "ProgressText"
 progressText.BackgroundTransparency = 1
-progressText.Position = UDim2.new(0, 14, 1, -26)
-progressText.Size = UDim2.new(1, -28, 0, 18)
+progressText.Position = UDim2.new(0, 14, 1, -22)
+progressText.Size = UDim2.new(1, -28, 0, 16)
 progressText.Font = Enum.Font.GothamSemibold
 progressText.TextSize = 14
-progressText.TextColor3 = Color3.fromRGB(220, 220, 220)
+progressText.TextColor3 = Color3.fromRGB(226, 226, 226)
 progressText.TextXAlignment = Enum.TextXAlignment.Right
 progressText.Text = "0/0"
+progressText.TextTruncate = Enum.TextTruncate.AtEnd
 progressText.Parent = root
+
+local progressSizeConstraint = Instance.new("UITextSizeConstraint")
+progressSizeConstraint.MinTextSize = 11
+progressSizeConstraint.MaxTextSize = 16
+progressSizeConstraint.Parent = progressText
 
 local bar = Instance.new("Frame")
 bar.Name = "ProgressBar"
-bar.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+bar.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
 bar.BorderSizePixel = 0
-bar.Position = UDim2.new(0, 14, 0, 34)
+bar.Position = UDim2.new(0, 14, 0, 36)
 bar.Size = UDim2.new(1, -28, 0, 16)
+bar.ClipsDescendants = true
 bar.Parent = root
 
 local barCorner = Instance.new("UICorner")
@@ -22875,7 +22935,7 @@ barCorner.Parent = bar
 
 local fill = Instance.new("Frame")
 fill.Name = "Fill"
-fill.BackgroundColor3 = colors.Common
+fill.BackgroundColor3 = rarityColors.Common
 fill.BorderSizePixel = 0
 fill.Size = UDim2.new(0, 0, 1, 0)
 fill.Parent = bar
@@ -22884,42 +22944,244 @@ local fillCorner = Instance.new("UICorner")
 fillCorner.CornerRadius = UDim.new(1, 0)
 fillCorner.Parent = fill
 
+local fillGloss = Instance.new("Frame")
+fillGloss.Name = "Gloss"
+fillGloss.BackgroundTransparency = 1
+fillGloss.Size = UDim2.new(1, 0, 1, 0)
+fillGloss.Parent = fill
+
+local fillGlossGradient = Instance.new("UIGradient")
+fillGlossGradient.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255)),
+})
+fillGlossGradient.Transparency = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 0.88),
+	NumberSequenceKeypoint.new(0.5, 0.65),
+	NumberSequenceKeypoint.new(1, 0.92),
+})
+fillGlossGradient.Rotation = 25
+fillGlossGradient.Parent = fillGloss
+
+local edge = Instance.new("Frame")
+edge.Name = "Edge"
+edge.AnchorPoint = Vector2.new(0.5, 0)
+edge.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+edge.BackgroundTransparency = 0.35
+edge.BorderSizePixel = 0
+edge.Position = UDim2.new(0, 0, 0, 0)
+edge.Size = UDim2.new(0, 3, 1, 0)
+edge.Parent = bar
+
+local edgeCorner = Instance.new("UICorner")
+edgeCorner.CornerRadius = UDim.new(1, 0)
+edgeCorner.Parent = edge
+
+local threatRow = Instance.new("Frame")
+threatRow.Name = "ThreatRow"
+threatRow.BackgroundTransparency = 1
+threatRow.Position = UDim2.new(0, 14, 0, 56)
+threatRow.Size = UDim2.new(1, -28, 0, 13)
+threatRow.Visible = false
+threatRow.Parent = root
+
+local threatLabel = Instance.new("TextLabel")
+threatLabel.Name = "ThreatLabel"
+threatLabel.BackgroundTransparency = 1
+threatLabel.Position = UDim2.new(0, 0, 0, 0)
+threatLabel.Size = UDim2.new(0, 150, 1, 0)
+threatLabel.Font = Enum.Font.GothamBold
+threatLabel.Text = "THREAT: LOW"
+threatLabel.TextColor3 = Color3.fromRGB(255, 148, 120)
+threatLabel.TextSize = 11
+threatLabel.TextXAlignment = Enum.TextXAlignment.Left
+threatLabel.Parent = threatRow
+
+local threatBar = Instance.new("Frame")
+threatBar.Name = "ThreatBar"
+threatBar.BackgroundColor3 = Color3.fromRGB(48, 26, 24)
+threatBar.BorderSizePixel = 0
+threatBar.Position = UDim2.new(0, 156, 0, 2)
+threatBar.Size = UDim2.new(1, -156, 0, 9)
+threatBar.ClipsDescendants = true
+threatBar.Parent = threatRow
+
+local threatBarCorner = Instance.new("UICorner")
+threatBarCorner.CornerRadius = UDim.new(1, 0)
+threatBarCorner.Parent = threatBar
+
+local threatFill = Instance.new("Frame")
+threatFill.Name = "Fill"
+threatFill.BackgroundColor3 = Color3.fromRGB(255, 118, 84)
+threatFill.BorderSizePixel = 0
+threatFill.Size = UDim2.new(0, 0, 1, 0)
+threatFill.Parent = threatBar
+
+local threatFillCorner = Instance.new("UICorner")
+threatFillCorner.CornerRadius = UDim.new(1, 0)
+threatFillCorner.Parent = threatFill
+
+local sounds = {}
 local function playOneShot(soundId)
-	local s = Instance.new("Sound")
-	s.SoundId = soundId
-	s.Volume = 0.8
-	s.Parent = gui
+	local s = sounds[soundId]
+	if not s then
+		s = Instance.new("Sound")
+		s.SoundId = soundId
+		s.Volume = 0.8
+		s.Parent = gui
+		sounds[soundId] = s
+	end
+	s:Stop()
+	s.TimePosition = 0
 	s:Play()
-	s.Ended:Connect(function() s:Destroy() end)
+end
+
+local currentPercent = 0
+local currentlyVisible = false
+local completedFlashThread
+
+local function setThreat(data, rarityColor)
+	local threatPercent = data and data.ThreatPercent
+	local threatText = data and data.ThreatLabel
+	if type(threatPercent) ~= "number" or type(threatText) ~= "string" or threatText == "" then
+		threatRow.Visible = false
+		progressText.Position = UDim2.new(0, 14, 1, -22)
+		return
+	end
+	threatRow.Visible = true
+	progressText.Position = UDim2.new(0, 14, 1, -21)
+	local p = clampPercent(threatPercent)
+	threatLabel.Text = "THREAT: " .. string.upper(threatText)
+	local danger = blend(Color3.fromRGB(224, 72, 62), Color3.fromRGB(255, 172, 98), 1 - p)
+	threatFill.BackgroundColor3 = blend(danger, rarityColor, 0.18)
+	TweenService:Create(threatFill, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = UDim2.new(p, 0, 1, 0)
+	}):Play()
+end
+
+local function pulseProgressBar()
+	local up = TweenService:Create(bar, TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = UDim2.new(1, -28, 0, 17)
+	})
+	local down = TweenService:Create(bar, TweenInfo.new(0.10, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+		Size = UDim2.new(1, -28, 0, 16)
+	})
+	up:Play()
+	up.Completed:Once(function()
+		down:Play()
+	end)
 end
 
 local function setState(data)
 	local rarity = data.Rarity or "Common"
+	local rarityColor = rarityColors[rarity] or rarityColors.Common
+	stroke.Color = rarityColor
+	glowStroke.Color = rarityColor
+	fill.BackgroundColor3 = rarityColor
+
 	title.Text = string.format("%s • %s", data.QuestName or "Night Quest", string.upper(rarity))
-	progressText.Text = string.format("%d/%d", math.floor(data.Current or 0), math.max(1, math.floor(data.Required or 1)))
-	local percent = math.clamp(data.Percent or 0, 0, 1)
-	TweenService:Create(fill, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(percent, 0, 1, 0)}):Play()
-	fill.BackgroundColor3 = colors[rarity] or colors.Common
-	stroke.Color = (colors[rarity] or colors.Common)
+
+	local current = math.floor(tonumber(data.Current) or 0)
+	local required = math.max(1, math.floor(tonumber(data.Required) or 1))
+	local prefix = type(data.ProgressPrefix) == "string" and data.ProgressPrefix or ""
+	if prefix ~= "" then
+		progressText.Text = string.format("%s %d/%d", prefix, current, required)
+	else
+		progressText.Text = string.format("%d/%d", current, required)
+	end
+
+	local percent = clampPercent(data.Percent)
+	TweenService:Create(fill, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = UDim2.new(percent, 0, 1, 0)
+	}):Play()
+	edge.Visible = percent > 0
+	edge.Position = UDim2.new(percent, 0, 0, 0)
+
+	if percent > currentPercent + 0.001 then
+		pulseProgressBar()
+	end
+	currentPercent = percent
+
+	setThreat(data, rarityColor)
+end
+
+local function animateShow()
+	currentlyVisible = true
+	gui.Enabled = true
+	root.Visible = true
+	rootScale.Scale = 0.92
+	root.BackgroundTransparency = 0.28
+	stroke.Transparency = 0.75
+	glowStroke.Transparency = 1
+	TweenService:Create(rootScale, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
+	TweenService:Create(root, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 0.12}):Play()
+	TweenService:Create(stroke, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Transparency = 0.16}):Play()
+	TweenService:Create(glowStroke, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Transparency = 0.68}):Play()
+end
+
+local function animateHide()
+	if not currentlyVisible then
+		gui.Enabled = false
+		return
+	end
+	currentlyVisible = false
+	local t1 = TweenService:Create(rootScale, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Scale = 0.95})
+	local t2 = TweenService:Create(root, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {BackgroundTransparency = 0.32})
+	local t3 = TweenService:Create(stroke, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Transparency = 1})
+	local t4 = TweenService:Create(glowStroke, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Transparency = 1})
+	t1:Play(); t2:Play(); t3:Play(); t4:Play()
+	t1.Completed:Once(function()
+		if not currentlyVisible then
+			gui.Enabled = false
+		end
+	end)
+end
+
+local function flashCompleted(rarity)
+	completeTag.Visible = true
+	completeTag.BackgroundColor3 = blend(rarityColors[rarity] or rarityColors.Common, Color3.fromRGB(34, 90, 62), 0.45)
+	if completedFlashThread then
+		task.cancel(completedFlashThread)
+	end
+	completedFlashThread = task.spawn(function()
+		local baseColor = stroke.Color
+		for i = 1, 3 do
+			TweenService:Create(stroke, TweenInfo.new(0.09, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Color = Color3.fromRGB(255, 244, 212)}):Play()
+			TweenService:Create(glowStroke, TweenInfo.new(0.09, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Transparency = 0.45}):Play()
+			task.wait(0.09)
+			TweenService:Create(stroke, TweenInfo.new(0.10, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Color = baseColor}):Play()
+			TweenService:Create(glowStroke, TweenInfo.new(0.10, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Transparency = 0.68}):Play()
+			task.wait(0.1)
+		end
+		task.wait(1)
+		completeTag.Visible = false
+	end)
 end
 
 NightHUDUpdate.OnClientEvent:Connect(function(data)
-	if type(data) ~= "table" then return end
-	if data.Type == "Start" then
-		gui.Enabled = true
-		root.Visible = true
+	if type(data) ~= "table" then
+		return
+	end
+
+	local eventType = data.Type
+	if eventType == "Start" then
 		setState(data)
+		animateShow()
 		playOneShot("rbxassetid://115916891254154")
-	elseif data.Type == "Progress" then
-		if not gui.Enabled then gui.Enabled = true end
-		setState(data)
-	elseif data.Type == "End" then
-		if gui.Enabled then
-			playOneShot("rbxassetid://118805682366014")
+	elseif eventType == "Progress" then
+		if not gui.Enabled then
+			animateShow()
 		end
-		gui.Enabled = false
-	elseif data.Type == "Complete" then
 		setState(data)
+	elseif eventType == "Complete" then
+		if not gui.Enabled then
+			animateShow()
+		end
+		setState(data)
+		flashCompleted(data.Rarity)
+	elseif eventType == "End" then
+		playOneShot("rbxassetid://118805682366014")
+		animateHide()
 	end
 end)
 ]]></ProtectedString>
